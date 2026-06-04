@@ -30,7 +30,12 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     runtimeOnly("org.postgresql:postgresql")
-    implementation("org.springframework.retry:spring-retry")
+
+    // JWT
+    implementation("io.jsonwebtoken:jjwt-api:0.12.6")
+    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
+    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+    implementation("org.springframework.retry:spring-retry:2.0.12")
     implementation("org.springframework:spring-aspects")
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")

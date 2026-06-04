@@ -2,8 +2,11 @@ package com.ibank.domain.transaction.service;
 
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.repository.AccountRepository;
+import com.ibank.domain.account.service.AccountAccessDeniedException;
+import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
+import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.entity.Transaction;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import lombok.RequiredArgsConstructor;
@@ -67,6 +70,82 @@ public class TransferService {
                 .toAccount(toAccount)
                 .amount(request.amount())
                 .type(Transaction.TransactionType.TRANSFER)
+                .description(request.description())
+                .build()
+                .withIdempotencyKey(request.idempotencyKey());
+        transaction.complete();
+
+        transactionRepository.save(transaction);
+        return TransferResponse.from(transaction);
+    }
+
+    /**
+     * HTTP 입금 — 소유권 검증 + 비관적 락.
+     * 사용자 요청은 단건이므로 재시도 복잡성 없이 비관적 락으로 단순하게 처리.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public TransferResponse depositForUser(Long userId, DepositRequest request) {
+        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
+            return TransferResponse.from(
+                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        }
+
+        Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + request.accountNumber()));
+
+        if (!account.getOwner().getId().equals(userId)) {
+            throw new AccountAccessDeniedException(request.accountNumber());
+        }
+
+        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
+            return TransferResponse.from(
+                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        }
+
+        account.deposit(request.amount());
+
+        Transaction transaction = Transaction.builder()
+                .toAccount(account)
+                .amount(request.amount())
+                .type(Transaction.TransactionType.DEPOSIT)
+                .description(request.description())
+                .build()
+                .withIdempotencyKey(request.idempotencyKey());
+        transaction.complete();
+
+        transactionRepository.save(transaction);
+        return TransferResponse.from(transaction);
+    }
+
+    /**
+     * 출금 — 소유권 검증 + 비관적 락.
+     * 잔액 초과 출금 방지를 위해 반드시 비관적 락 사용.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public TransferResponse withdraw(Long userId, WithdrawRequest request) {
+        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
+            return TransferResponse.from(
+                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        }
+
+        Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + request.accountNumber()));
+
+        if (!account.getOwner().getId().equals(userId)) {
+            throw new AccountAccessDeniedException(request.accountNumber());
+        }
+
+        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
+            return TransferResponse.from(
+                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        }
+
+        account.withdraw(request.amount());
+
+        Transaction transaction = Transaction.builder()
+                .fromAccount(account)
+                .amount(request.amount())
+                .type(Transaction.TransactionType.WITHDRAWAL)
                 .description(request.description())
                 .build()
                 .withIdempotencyKey(request.idempotencyKey());

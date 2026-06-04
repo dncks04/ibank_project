@@ -1,9 +1,11 @@
 package com.ibank.domain.transaction.controller;
 
+import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransactionHistoryResponse;
 import com.ibank.domain.transaction.dto.TransactionSearchRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
+import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.service.TransactionQueryService;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.global.response.ApiResponse;
@@ -25,6 +27,22 @@ public class TransactionController {
 
     private final TransferService transferService;
     private final TransactionQueryService transactionQueryService;
+
+    @PostMapping("/transactions/deposit")
+    public ResponseEntity<ApiResponse<TransferResponse>> deposit(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @Valid @RequestBody DepositRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                transferService.depositForUser(userDetails.getUserId(), request)));
+    }
+
+    @PostMapping("/transactions/withdraw")
+    public ResponseEntity<ApiResponse<TransferResponse>> withdraw(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @Valid @RequestBody WithdrawRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                transferService.withdraw(userDetails.getUserId(), request)));
+    }
 
     @PostMapping("/transactions/transfer")
     public ResponseEntity<ApiResponse<TransferResponse>> transfer(

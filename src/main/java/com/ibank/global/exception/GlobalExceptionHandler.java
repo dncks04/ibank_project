@@ -1,6 +1,7 @@
 package com.ibank.global.exception;
 
 import com.ibank.domain.account.entity.InsufficientBalanceException;
+import com.ibank.domain.account.service.AccountAccessDeniedException;
 import com.ibank.global.response.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,13 +15,19 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(InsufficientBalanceException.class)
     public ResponseEntity<ApiResponse<Void>> handleInsufficientBalance(InsufficientBalanceException e) {
-        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT)
                 .body(ApiResponse.error(e.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    @ExceptionHandler(AccountAccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccountAccessDenied(AccountAccessDeniedException e) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error(e.getMessage()));
     }
 

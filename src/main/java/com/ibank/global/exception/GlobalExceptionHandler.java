@@ -32,8 +32,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException e) {
-        String message = e.getBindingResult().getFieldErrors().stream()
-                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+        String message = e.getAllErrors().stream()
+                .filter(err -> err instanceof org.springframework.validation.FieldError)
+                .map(err -> ((org.springframework.validation.FieldError) err).getField()
+                        + ": " + err.getDefaultMessage())
                 .findFirst()
                 .orElse("입력값이 올바르지 않습니다.");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)

@@ -23,8 +23,8 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     @Query("""
             SELECT t FROM Transaction t
             WHERE (t.fromAccount.id = :accountId OR t.toAccount.id = :accountId)
-              AND (:from IS NULL OR t.createdAt >= :from)
-              AND (:to   IS NULL OR t.createdAt <= :to)
+              AND (CAST(:from AS timestamp) IS NULL OR t.createdAt >= :from)
+              AND (CAST(:to   AS timestamp) IS NULL OR t.createdAt <= :to)
             ORDER BY t.createdAt DESC
             """)
     Page<Transaction> findByAccountIdAndDateRange(

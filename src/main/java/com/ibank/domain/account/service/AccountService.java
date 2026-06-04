@@ -69,6 +69,20 @@ public class AccountService {
         throw new IllegalStateException("계좌번호 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     }
 
+    @Transactional
+    public void closeAccount(String accountNumber, Long userId) {
+        Account account = accountRepository.findByAccountNumberWithLock(accountNumber)
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + accountNumber));
+
+        validateOwnership(account, userId);
+
+        if (account.getBalance().compareTo(java.math.BigDecimal.ZERO) != 0) {
+            throw new IllegalStateException("잔액이 남아있는 계좌는 해지할 수 없습니다. 잔액: " + account.getBalance());
+        }
+
+        account.close();
+    }
+
     private void validateOwnership(Account account, Long userId) {
         if (!account.getOwner().getId().equals(userId)) {
             throw new AccountAccessDeniedException(account.getAccountNumber());

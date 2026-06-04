@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Comparator;
+import java.math.BigDecimal;
 import java.util.List;
 
 @Service
@@ -27,30 +27,40 @@ public class TransferService {
 
     /**
      * 이체 처리 - 비관적 락 사용.
-     * 데드락 방지: 항상 account_number 오름차순으로 락 획득.
+     *
+     * 데드락 방지: account_number 오름차순으로 락 획득 (전역 락 순서 고정).
+     * 멱등성:     락 획득 전 1차 검증, 락 획득 후 2차 재검증 (double-checked locking).
+     *             READ_COMMITTED에서 락 해제 후 상대 스레드가 커밋된 행을 볼 수 있음을 이용.
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse transfer(TransferRequest request) {
-        // 멱등성 검증: 동일 key로 중복 요청 시 기존 결과 반환
+        // 1차 검증 (락 없음): 명백한 중복 요청 빠른 반환
         if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
-            Transaction existing = transactionRepository.findByIdempotencyKey(request.idempotencyKey())
-                    .orElseThrow();
-            return TransferResponse.from(existing);
+            return TransferResponse.from(
+                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
         }
 
-        // 데드락 방지: 계좌 번호 기준 정렬 후 순서대로 락 획득
-        List<String> sortedNumbers = List.of(request.fromAccountNumber(), request.toAccountNumber())
-                .stream()
-                .sorted(Comparator.naturalOrder())
-                .toList();
+        // 데드락 방지: 항상 계좌 번호 오름차순으로 락 획득
+        List<String> sorted = List.of(request.fromAccountNumber(), request.toAccountNumber())
+                .stream().sorted().toList();
 
-        Account first = accountRepository.findByAccountNumberWithLock(sortedNumbers.get(0))
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + sortedNumbers.get(0)));
-        Account second = accountRepository.findByAccountNumberWithLock(sortedNumbers.get(1))
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + sortedNumbers.get(1)));
+        Account first = accountRepository.findByAccountNumberWithLock(sorted.get(0))
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + sorted.get(0)));
+        Account second = accountRepository.findByAccountNumberWithLock(sorted.get(1))
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + sorted.get(1)));
+
+        // 2차 검증 (락 보유 상태): 동시 요청이 동일 key로 락을 대기 후 진입한 경우 방어
+        // READ_COMMITTED이므로 락 대기 중 상대 스레드가 커밋하면 이 시점에 보임
+        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
+            return TransferResponse.from(
+                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        }
 
         Account fromAccount = first.getAccountNumber().equals(request.fromAccountNumber()) ? first : second;
-        Account toAccount = first.getAccountNumber().equals(request.toAccountNumber()) ? first : second;
+        Account toAccount   = first.getAccountNumber().equals(request.toAccountNumber())   ? first : second;
+
+        fromAccount.withdraw(request.amount());
+        toAccount.deposit(request.amount());
 
         Transaction transaction = Transaction.builder()
                 .fromAccount(fromAccount)
@@ -60,32 +70,23 @@ public class TransferService {
                 .description(request.description())
                 .build()
                 .withIdempotencyKey(request.idempotencyKey());
-
-        try {
-            fromAccount.withdraw(request.amount());
-            toAccount.deposit(request.amount());
-            transaction.complete();
-        } catch (Exception e) {
-            transaction.fail();
-            transactionRepository.save(transaction);
-            throw e;
-        }
+        transaction.complete();
 
         transactionRepository.save(transaction);
         return TransferResponse.from(transaction);
     }
 
     /**
-     * 낙관적 락 기반 입금 - 충돌 시 재시도.
-     * 동시 입금이 빈번하지만 충돌 확률이 낮을 때 사용.
+     * 입금 처리 - 낙관적 락 사용.
+     * 충돌 시 @Retryable이 재시도. 동시 입금이 많지만 충돌 확률이 낮을 때 적합.
      */
     @Retryable(
         retryFor = {ObjectOptimisticLockingFailureException.class, OptimisticLockingFailureException.class},
-        maxAttempts = 3,
-        backoff = @Backoff(delay = 100, multiplier = 2)
+        maxAttempts = 5,
+        backoff = @Backoff(delay = 50, multiplier = 2, maxDelay = 1000)
     )
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public void deposit(String accountNumber, java.math.BigDecimal amount, String idempotencyKey) {
+    public void deposit(String accountNumber, BigDecimal amount, String idempotencyKey) {
         if (transactionRepository.existsByIdempotencyKey(idempotencyKey)) {
             return;
         }

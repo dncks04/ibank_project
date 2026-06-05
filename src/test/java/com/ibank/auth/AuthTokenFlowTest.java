@@ -5,10 +5,12 @@ import com.ibank.domain.user.dto.LoginResponse;
 import com.ibank.domain.user.dto.RegisterRequest;
 import com.ibank.domain.user.dto.TokenResponse;
 import com.ibank.domain.user.exception.InvalidCredentialsException;
+import com.ibank.domain.user.entity.RefreshToken;
 import com.ibank.domain.user.exception.InvalidRefreshTokenException;
 import com.ibank.domain.user.repository.RefreshTokenRepository;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.domain.user.service.UserService;
+import com.ibank.global.audit.AuditLogRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,9 +35,11 @@ class AuthTokenFlowTest {
     @Autowired UserService userService;
     @Autowired UserRepository userRepository;
     @Autowired RefreshTokenRepository refreshTokenRepository;
+    @Autowired AuditLogRepository auditLogRepository;
 
     @BeforeEach
     void setUp() {
+        auditLogRepository.deleteAll();
         refreshTokenRepository.deleteAll();
         userRepository.deleteAll();
         userService.register(new RegisterRequest("authuser", "password123", "인증유저", "auth@test.com"));
@@ -82,6 +86,40 @@ class AuthTokenFlowTest {
 
         assertThatThrownBy(() -> userService.refresh(login.refreshToken()))
                 .isInstanceOf(InvalidRefreshTokenException.class);
+    }
+
+    @Test
+    @DisplayName("회전된 토큰 재사용 시 탈취로 간주해 전체 세션을 무효화하고 감사 경보를 남긴다")
+    void refresh_reuseOfRotatedToken_revokesAllSessionsAndAlerts() {
+        LoginResponse login = login();
+        TokenResponse rotated = userService.refresh(login.refreshToken()); // T1 → T2 (T1 rotated)
+
+        // 이미 회전된 T1을 재사용 (탈취 시나리오) → 거부
+        assertThatThrownBy(() -> userService.refresh(login.refreshToken()))
+                .isInstanceOf(InvalidRefreshTokenException.class);
+
+        // 전체 세션 무효화: 정상 사용자의 새 토큰(T2)도 더는 쓸 수 없다
+        assertThatThrownBy(() -> userService.refresh(rotated.refreshToken()))
+                .isInstanceOf(InvalidRefreshTokenException.class);
+        assertThat(refreshTokenRepository.findAll()).allMatch(RefreshToken::isRevoked);
+
+        // 보안 경보가 감사 로그에 남는다
+        assertThat(auditLogRepository.findAll())
+                .anyMatch(a -> "REFRESH_TOKEN_REUSE".equals(a.getAction()) && "FAILURE".equals(a.getResult()));
+    }
+
+    @Test
+    @DisplayName("로그아웃으로 폐기된 토큰 재제출은 단순 거부일 뿐 재사용 경보를 만들지 않는다")
+    void refresh_reuseOfLoggedOutToken_noAlert() {
+        LoginResponse login = login();
+        userService.logout(login.refreshToken());
+
+        assertThatThrownBy(() -> userService.refresh(login.refreshToken()))
+                .isInstanceOf(InvalidRefreshTokenException.class);
+
+        // 로그아웃은 탈취가 아니므로 재사용 경보(REFRESH_TOKEN_REUSE) 없음
+        assertThat(auditLogRepository.findAll())
+                .noneMatch(a -> "REFRESH_TOKEN_REUSE".equals(a.getAction()));
     }
 
     @Test

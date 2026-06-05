@@ -33,6 +33,7 @@ public class RefreshTokenService {
     private static final Base64.Encoder URL_ENCODER = Base64.getUrlEncoder().withoutPadding();
 
     private final RefreshTokenRepository refreshTokenRepository;
+    private final RefreshTokenReuseHandler reuseHandler;
     private final JwtProperties jwtProperties;
 
     /** 새 리프레시 토큰 발급. 반환값은 클라이언트에 전달할 원문. */
@@ -49,18 +50,29 @@ public class RefreshTokenService {
     }
 
     /**
-     * 리프레시 토큰 검증 후 폐기(회전). 유효하면 소유 사용자를 반환한다.
-     * 호출자는 반환된 사용자로 새 access/refresh 토큰을 발급한다.
+     * 리프레시 토큰 검증 후 회전(기존 폐기 + 사용자 반환). 호출자는 반환된 사용자로 새 토큰을 발급한다.
+     *
+     * 재사용 탐지: 이미 회전으로 폐기된 토큰이 다시 들어오면 탈취로 간주하여 전체 세션을 무효화한다
+     * ({@link RefreshTokenReuseHandler}). 로그아웃으로 폐기된 토큰의 재제출은 단순 거부한다.
      */
     @Transactional
     public User rotate(String rawToken) {
         RefreshToken token = refreshTokenRepository.findByTokenHash(hash(rawToken))
                 .orElseThrow(InvalidRefreshTokenException::new);
 
-        if (!token.isActive(LocalDateTime.now())) {
+        if (token.isRevoked()) {
+            // 회전으로 폐기된 토큰의 재사용만 탈취 신호 → 전체 세션 무효화 + 경보 (별도 트랜잭션 커밋)
+            if (token.isRotated()) {
+                reuseHandler.handleReuse(token.getUser());
+            }
             throw new InvalidRefreshTokenException();
         }
-        token.revoke();
+
+        if (token.isExpired(LocalDateTime.now())) {
+            throw new InvalidRefreshTokenException();
+        }
+
+        token.markRotated();
         return token.getUser();
     }
 

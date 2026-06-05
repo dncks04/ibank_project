@@ -32,6 +32,10 @@ public class RefreshToken {
     @Column(nullable = false)
     private boolean revoked;
 
+    /** 회전(rotation)으로 폐기되었는지. true인 토큰의 재제출은 탈취 의심(재사용 탐지 대상). */
+    @Column(nullable = false)
+    private boolean rotated;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -41,14 +45,22 @@ public class RefreshToken {
         this.tokenHash = tokenHash;
         this.expiresAt = expiresAt;
         this.revoked = false;
+        this.rotated = false;
         this.createdAt = LocalDateTime.now();
     }
 
+    /** 로그아웃 등 일반 폐기. 재사용 탐지 대상이 아니다(rotated=false 유지). */
     public void revoke() {
         this.revoked = true;
     }
 
-    public boolean isActive(LocalDateTime now) {
-        return !revoked && expiresAt.isAfter(now);
+    /** 회전으로 소비됨. 이후 재제출되면 탈취로 간주한다. */
+    public void markRotated() {
+        this.revoked = true;
+        this.rotated = true;
+    }
+
+    public boolean isExpired(LocalDateTime now) {
+        return !expiresAt.isAfter(now);
     }
 }

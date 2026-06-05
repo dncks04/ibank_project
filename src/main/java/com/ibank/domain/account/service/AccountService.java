@@ -29,7 +29,7 @@ public class AccountService {
     private final UserRepository userRepository;
     private final LedgerService ledgerService;
 
-    @Audited(action = "ACCOUNT_OPEN")
+    @Audited(action = "ACCOUNT_OPEN", target = "#result.accountNumber")
     @Transactional
     public AccountResponse openAccount(Long userId, AccountOpenRequest request) {
         User owner = userRepository.findById(userId)
@@ -77,7 +77,7 @@ public class AccountService {
         throw new IllegalStateException("계좌번호 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     }
 
-    @Audited(action = "ACCOUNT_CLOSE")
+    @Audited(action = "ACCOUNT_CLOSE", target = "#accountNumber")
     @Transactional
     public void closeAccount(String accountNumber, Long userId) {
         Account account = accountRepository.findByAccountNumberWithLock(accountNumber)

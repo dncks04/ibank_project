@@ -40,7 +40,7 @@ public class TransferService {
      * 멱등성:     락 획득 전 1차 검증, 락 획득 후 2차 재검증 (double-checked locking).
      *             READ_COMMITTED에서 락 해제 후 상대 스레드가 커밋된 행을 볼 수 있음을 이용.
      */
-    @Audited(action = "TRANSFER")
+    @Audited(action = "TRANSFER", target = "#request.fromAccountNumber + '→' + #request.toAccountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse transfer(TransferRequest request) {
         // 1차 검증 (락 없음): 명백한 중복 요청 빠른 반환
@@ -92,7 +92,7 @@ public class TransferService {
      * HTTP 입금 — 소유권 검증 + 비관적 락.
      * 사용자 요청은 단건이므로 재시도 복잡성 없이 비관적 락으로 단순하게 처리.
      */
-    @Audited(action = "DEPOSIT")
+    @Audited(action = "DEPOSIT", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse depositForUser(Long userId, DepositRequest request) {
         if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
@@ -132,7 +132,7 @@ public class TransferService {
      * 출금 — 소유권 검증 + 비관적 락.
      * 잔액 초과 출금 방지를 위해 반드시 비관적 락 사용.
      */
-    @Audited(action = "WITHDRAW")
+    @Audited(action = "WITHDRAW", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse withdraw(Long userId, WithdrawRequest request) {
         if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {

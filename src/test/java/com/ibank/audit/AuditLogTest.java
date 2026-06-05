@@ -5,6 +5,7 @@ import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
 import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.transaction.dto.DepositRequest;
+import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
@@ -47,6 +48,7 @@ class AuditLogTest {
     @Autowired AuditLogRepository auditLogRepository;
 
     private static final String ACC = "50260101000001";
+    private static final String ACC2 = "50260101000002";
     private Long ownerId;
     private Long otherId;
 
@@ -71,6 +73,10 @@ class AuditLogTest {
         accountRepository.save(Account.builder()
                 .accountNumber(ACC).owner(owner)
                 .initialBalance(new BigDecimal("10000")).build());
+
+        accountRepository.save(Account.builder()
+                .accountNumber(ACC2).owner(other)
+                .initialBalance(new BigDecimal("0")).build());
     }
 
     @Test
@@ -80,7 +86,9 @@ class AuditLogTest {
                 new DepositRequest(ACC, new BigDecimal("1000"), UUID.randomUUID().toString(), "감사 테스트"));
 
         assertThat(auditLogRepository.findAll())
-                .anyMatch(a -> "DEPOSIT".equals(a.getAction()) && "SUCCESS".equals(a.getResult()));
+                .anyMatch(a -> "DEPOSIT".equals(a.getAction())
+                        && "SUCCESS".equals(a.getResult())
+                        && ACC.equals(a.getTarget()));
     }
 
     @Test
@@ -97,5 +105,18 @@ class AuditLogTest {
                 .orElseThrow(() -> new AssertionError("FAILURE 감사 로그가 없습니다"));
 
         assertThat(failure.getDetail()).isEqualTo("AccountAccessDeniedException");
+        assertThat(failure.getTarget()).isEqualTo(ACC);
+    }
+
+    @Test
+    @DisplayName("이체 감사 로그 target에는 출금→입금 계좌가 모두 남는다")
+    void transfer_success_recordsBothAccountsInTarget() {
+        transferService.transfer(new TransferRequest(
+                UUID.randomUUID().toString(), ACC, ACC2, new BigDecimal("1000"), "이체 감사 테스트"));
+
+        assertThat(auditLogRepository.findAll())
+                .anyMatch(a -> "TRANSFER".equals(a.getAction())
+                        && "SUCCESS".equals(a.getResult())
+                        && (ACC + "→" + ACC2).equals(a.getTarget()));
     }
 }

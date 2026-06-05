@@ -2,6 +2,7 @@ package com.ibank.concurrency;
 
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.repository.AccountRepository;
+import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
@@ -43,12 +44,14 @@ class DepositConcurrencyTest {
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private TransactionRepository transactionRepository;
+    @Autowired private LedgerEntryRepository ledgerEntryRepository;
     @Autowired private PasswordEncoder passwordEncoder;
 
     private static final String ACC = "20260102000001";
 
     @BeforeEach
     void setUp() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();
@@ -66,6 +69,7 @@ class DepositConcurrencyTest {
 
     @AfterEach
     void tearDown() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();

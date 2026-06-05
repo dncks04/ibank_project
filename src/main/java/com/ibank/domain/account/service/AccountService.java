@@ -44,7 +44,7 @@ public class AccountService {
     @Transactional(readOnly = true)
     public AccountResponse getAccount(String accountNumber, Long userId) {
         Account account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + accountNumber));
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
 
         validateOwnership(account, userId);
         return AccountResponse.from(account);
@@ -72,12 +72,12 @@ public class AccountService {
     @Transactional
     public void closeAccount(String accountNumber, Long userId) {
         Account account = accountRepository.findByAccountNumberWithLock(accountNumber)
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + accountNumber));
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
 
         validateOwnership(account, userId);
 
         if (account.getBalance().compareTo(java.math.BigDecimal.ZERO) != 0) {
-            throw new IllegalStateException("잔액이 남아있는 계좌는 해지할 수 없습니다. 잔액: " + account.getBalance());
+            throw new IllegalStateException("잔액이 남아있는 계좌는 해지할 수 없습니다.");
         }
 
         account.close();

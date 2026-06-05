@@ -17,6 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -50,6 +51,7 @@ class LedgerReconciliationTest {
     @Autowired AccountRepository accountRepository;
     @Autowired TransactionRepository transactionRepository;
     @Autowired LedgerEntryRepository ledgerEntryRepository;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     private String accA;
     private String accB;
@@ -108,6 +110,18 @@ class LedgerReconciliationTest {
         // 원장 항목 수: A = 1(opening) + n(DEBIT), B = n(CREDIT)
         assertThat(ledgerEntryRepository.countByAccountId(accAId)).isEqualTo(1 + n);
         assertThat(ledgerEntryRepository.countByAccountId(accBId)).isEqualTo(n);
+    }
+
+    @Test
+    @DisplayName("잔액이 원장과 어긋나면 불일치로 탐지된다 (true positive)")
+    void tamperedBalance_isDetectedAsInconsistent() {
+        // 원장은 그대로 두고 잔액만 +1 → 불변식 balance == SUM(CREDIT)-SUM(DEBIT) 위반
+        jdbcTemplate.update("UPDATE accounts SET balance = balance + 1 WHERE id = ?", accAId);
+
+        assertThat(reconciliationService.isConsistent(accAId)).isFalse();
+        assertThat(reconciliationService.findInconsistentAccounts())
+                .contains(accAId)
+                .doesNotContain(accBId);
     }
 
     private void runConcurrently(int n, Runnable task) throws InterruptedException {

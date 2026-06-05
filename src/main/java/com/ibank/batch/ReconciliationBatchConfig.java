@@ -2,9 +2,8 @@ package com.ibank.batch;
 
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.repository.AccountRepository;
-import com.ibank.domain.ledger.entity.LedgerDirection;
+import com.ibank.domain.ledger.dto.AccountLedgerBalance;
 import com.ibank.domain.ledger.entity.ReconciliationResult;
-import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.ledger.repository.ReconciliationResultRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.configuration.annotation.StepScope;
@@ -24,7 +23,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.PlatformTransactionManager;
 
-import java.math.BigDecimal;
 import java.util.Map;
 
 /**
@@ -40,7 +38,6 @@ public class ReconciliationBatchConfig {
     private static final int CHUNK_SIZE = 100;
 
     private final AccountRepository accountRepository;
-    private final LedgerEntryRepository ledgerEntryRepository;
     private final ReconciliationResultRepository reconciliationResultRepository;
 
     @Bean
@@ -58,10 +55,12 @@ public class ReconciliationBatchConfig {
     @StepScope
     public ItemProcessor<Account, ReconciliationResult> reconciliationProcessor(
             @Value("#{stepExecution.jobExecutionId}") Long jobExecutionId) {
+        // reader가 읽은 account.balance는 사용하지 않는다(읽은 시점이 다름 → read skew 위험).
+        // balance와 ledgerSum을 단일 쿼리(단일 스냅샷)로 다시 함께 읽어 정합성 검증의 오탐을 막는다.
         return account -> {
-            BigDecimal ledgerSum = ledgerEntryRepository
-                    .signedSumByAccountId(account.getId(), LedgerDirection.CREDIT);
-            return ReconciliationResult.of(jobExecutionId, account.getId(), account.getBalance(), ledgerSum);
+            AccountLedgerBalance row = accountRepository.findAccountLedgerBalance(account.getId())
+                    .orElseThrow();
+            return ReconciliationResult.of(jobExecutionId, row.getAccountId(), row.getBalance(), row.getLedgerSum());
         };
     }
 

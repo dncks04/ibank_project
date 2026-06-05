@@ -1,0 +1,17 @@
+# 빌드 산출물 (이미지 안에서 새로 빌드함)
+build/
+.gradle/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# VCS / CI
+.git/
+.github/
+
+# 문서·부하테스트 (런타임 불필요)
+*.md
+load-test/

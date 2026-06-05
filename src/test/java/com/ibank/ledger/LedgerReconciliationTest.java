@@ -30,7 +30,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import org.springframework.dao.DataIntegrityViolationException;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 원장 정합성 검증. account.balance == SUM(CREDIT) - SUM(DEBIT) 불변식이
@@ -122,6 +125,15 @@ class LedgerReconciliationTest {
         assertThat(reconciliationService.findInconsistentAccounts())
                 .contains(accAId)
                 .doesNotContain(accBId);
+    }
+
+    @Test
+    @DisplayName("음수 잔액은 DB CHECK 제약이 거부한다 (앱 로직과 무관한 최후 방어선)")
+    void negativeBalance_rejectedByDbConstraint() {
+        // 도메인 로직을 우회한 직접 UPDATE라도 DB가 막아야 한다
+        assertThatThrownBy(() ->
+                jdbcTemplate.update("UPDATE accounts SET balance = -1 WHERE id = ?", accAId))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     private void runConcurrently(int n, Runnable task) throws InterruptedException {

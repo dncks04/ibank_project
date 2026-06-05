@@ -1,6 +1,7 @@
 package com.ibank.domain.transaction.service;
 
 import com.ibank.domain.account.entity.Account;
+import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
 import com.ibank.domain.transaction.dto.DepositRequest;
@@ -48,9 +49,9 @@ public class TransferService {
                 .stream().sorted().toList();
 
         Account first = accountRepository.findByAccountNumberWithLock(sorted.get(0))
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(sorted.get(0)));
         Account second = accountRepository.findByAccountNumberWithLock(sorted.get(1))
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(sorted.get(1)));
 
         // 2차 검증 (락 보유 상태): 동시 요청이 동일 key로 락을 대기 후 진입한 경우 방어
         // READ_COMMITTED이므로 락 대기 중 상대 스레드가 커밋하면 이 시점에 보임
@@ -91,7 +92,7 @@ public class TransferService {
         }
 
         Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(request.accountNumber()));
 
         if (!account.getOwner().getId().equals(userId)) {
             throw new AccountAccessDeniedException(request.accountNumber());
@@ -129,7 +130,7 @@ public class TransferService {
         }
 
         Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(request.accountNumber()));
 
         if (!account.getOwner().getId().equals(userId)) {
             throw new AccountAccessDeniedException(request.accountNumber());
@@ -171,7 +172,7 @@ public class TransferService {
         }
 
         Account account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
         account.deposit(amount);
 

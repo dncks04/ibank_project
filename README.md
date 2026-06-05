@@ -14,8 +14,9 @@
 - **정합성 검증**: 동시 이체/입금 시 **총 잔액 보존**과 **음수 잔액 불가**를 통합 테스트로 증명
 - **불변 원장(Ledger)**: 모든 잔액 변동을 복식부기(차변/대변)로 append-only 기록, `잔액 == 원장 합계` 정산(reconciliation) 검증
 - **감사 로그(Audit)**: AOP로 상태 변경 행위(누가·무엇을·결과·IP)를 기록, 실패 시에도 별도 트랜잭션으로 보존
+- **정산 배치(Spring Batch)**: 매일 전 계좌의 `잔액 == 원장 합계`를 검증하고 불일치를 기록하는 청크 기반 배치
 - **보안**: JWT(access 15분) + 회전형 refresh 토큰(14일), 로그인 brute-force 잠금, 예외 응답의 내부정보 유출 차단
-- **테스트**: Testcontainers 기반 실제 PostgreSQL 통합/동시성 테스트 (총 62개)
+- **테스트**: Testcontainers 기반 실제 PostgreSQL 통합/동시성 테스트 (총 63개)
 - **CI**: GitHub Actions에서 매 PR마다 전체 빌드·테스트
 
 ---
@@ -190,6 +191,15 @@ sequenceDiagram
 
 불변식 **`account.balance == SUM(CREDIT) - SUM(DEBIT)`** 을 `ReconciliationService`로 검증합니다. 동시 이체 후에도 모든 계좌에서 이 불변식이 성립함을 통합 테스트로 증명합니다(`LedgerReconciliationTest`).
 
+### 정산 배치 (Spring Batch)
+
+운영에서는 위 정합성 검증을 **일일 배치**로 자동화합니다. 청크 지향 스텝으로 구성:
+
+- **Reader** `RepositoryItemReader<Account>` (페이징) → **Processor** 잔액 vs 원장 합계 비교 → **Writer** 결과를 `reconciliation_results`에 저장
+- 배치 메타데이터(`BATCH_*`)는 Flyway(V7)로 관리(`initialize-schema=never`)
+- 기동 시 자동 실행하지 않고(`spring.batch.job.enabled=false`), `ReconciliationScheduler`(cron, 운영에서만 활성)로 트리거
+- 불일치 계좌를 `consistent=false`로 기록 → 조사/알림 대상. `ReconciliationBatchTest`가 불일치 탐지를 검증
+
 ### 감사 로그 (AOP)
 
 `@Audited` 어노테이션이 붙은 서비스 메서드를 AOP로 가로채 누가(actor)·무엇을(action/target)·결과(SUCCESS/FAILURE)·IP를 기록합니다.
@@ -285,6 +295,6 @@ docker run -d --name ibank-db -p 5432:5432 \
 
 ## 향후 개선 (로드맵)
 
-- Spring Batch 기반 일일 정산/이자 배치 (원장 기반 정산을 배치로 자동화)
+- 이자 계산 배치(예/적금 상품) — 정산 배치 인프라 위에 추가
 - Redis 기반 분산 레이트리밋/캐시 (다중 인스턴스 대응)
 - 관측성: Micrometer + Prometheus/Grafana, correlation ID 로깅

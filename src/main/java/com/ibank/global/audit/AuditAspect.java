@@ -1,5 +1,6 @@
 package com.ibank.global.audit;
 
+import com.ibank.global.web.ClientIpResolver;
 import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -44,6 +45,7 @@ public class AuditAspect {
     private static final int TARGET_MAX_LENGTH = 100;
 
     private final AuditService auditService;
+    private final ClientIpResolver clientIpResolver;
 
     private final ExpressionParser expressionParser = new SpelExpressionParser();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
@@ -110,7 +112,7 @@ public class AuditAspect {
 
     private String currentIp() {
         if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
-            return attrs.getRequest().getRemoteAddr();
+            return clientIpResolver.resolve(attrs.getRequest());
         }
         return null;
     }

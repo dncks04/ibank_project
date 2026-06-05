@@ -3,6 +3,7 @@ package com.ibank.concurrency;
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.transaction.dto.TransferRequest;
+import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
@@ -44,6 +45,7 @@ class TransferConcurrencyTest {
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private TransactionRepository transactionRepository;
+    @Autowired private LedgerEntryRepository ledgerEntryRepository;
     @Autowired private PasswordEncoder passwordEncoder;
 
     private static final String ACC_A = "20260101000001";
@@ -51,6 +53,7 @@ class TransferConcurrencyTest {
 
     @BeforeEach
     void setUp() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();
@@ -71,6 +74,7 @@ class TransferConcurrencyTest {
 
     @AfterEach
     void tearDown() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();
@@ -104,6 +108,7 @@ class TransferConcurrencyTest {
     @DisplayName("A→B와 B→A 동시 이체 - 데드락 없이 완료된다")
     void transfer_concurrent_deadlockNotOccurred() throws InterruptedException {
         // 양방향 동시 이체: A→B 50건, B→A 50건 → 총 잔액 보존, 데드락 없음
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
 
@@ -187,6 +192,7 @@ class TransferConcurrencyTest {
     @DisplayName("잔액 초과 동시 이체 - 잔액이 음수가 되지 않는다")
     void transfer_concurrent_overdraftNeverOccurs() throws InterruptedException {
         // A 잔액 5,000원, 스레드 10개가 각각 1,000원 이체 시도 → 5개만 성공
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
 

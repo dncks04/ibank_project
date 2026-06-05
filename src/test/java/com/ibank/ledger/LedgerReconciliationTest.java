@@ -8,6 +8,7 @@ import com.ibank.domain.account.service.AccountService;
 import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.ledger.service.ReconciliationService;
 import com.ibank.domain.transaction.dto.TransferRequest;
+import com.ibank.domain.transaction.exception.SameAccountTransferException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
@@ -125,6 +126,19 @@ class LedgerReconciliationTest {
         assertThat(reconciliationService.findInconsistentAccounts())
                 .contains(accAId)
                 .doesNotContain(accBId);
+    }
+
+    @Test
+    @DisplayName("동일 계좌 이체는 거부되고 거래·원장이 전혀 생성되지 않는다")
+    void selfTransfer_rejected_noSideEffects() {
+        assertThatThrownBy(() -> transferService.transfer(new TransferRequest(
+                UUID.randomUUID().toString(), accA, accA, new BigDecimal("1000"), "자기이체")))
+                .isInstanceOf(SameAccountTransferException.class);
+
+        // 거래 미생성 + 원장은 setUp의 opening 항목(accA 1건)만 유지
+        assertThat(transactionRepository.count()).isZero();
+        assertThat(ledgerEntryRepository.countByAccountId(accAId)).isEqualTo(1);
+        assertThat(reconciliationService.isConsistent(accAId)).isTrue();
     }
 
     @Test

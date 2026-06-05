@@ -11,6 +11,7 @@ import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
 import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.entity.Transaction;
+import com.ibank.domain.transaction.exception.SameAccountTransferException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.global.audit.Audited;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +44,11 @@ public class TransferService {
     @Audited(action = "TRANSFER", target = "#request.fromAccountNumber + '→' + #request.toAccountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse transfer(TransferRequest request) {
+        // 동일 계좌 이체 차단: 락/멱등성 키 소모·무의미한 거래·원장 leg 생성 전에 fail-fast
+        if (request.fromAccountNumber().equals(request.toAccountNumber())) {
+            throw new SameAccountTransferException(request.fromAccountNumber());
+        }
+
         // 1차 검증 (락 없음): 명백한 중복 요청 빠른 반환
         if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
             return TransferResponse.from(

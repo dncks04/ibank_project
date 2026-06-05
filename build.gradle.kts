@@ -32,6 +32,7 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     // Flyway
+    implementation("org.springframework.boot:spring-boot-flyway")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
 
@@ -43,14 +44,11 @@ dependencies {
     implementation("org.springframework:spring-aspects")
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.testcontainers:junit-jupiter:1.20.6")
     testImplementation("org.testcontainers:postgresql:1.20.6")
-    testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-security-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-validation-test")
-    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
+    testImplementation("org.springframework.security:spring-security-test")
 }
 
 tasks.withType<JavaCompile> {

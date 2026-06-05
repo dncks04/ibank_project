@@ -43,4 +43,12 @@ public class AccountController {
         AccountResponse response = accountService.getAccount(accountNumber, userDetails.getUserId());
         return ResponseEntity.ok(ApiResponse.success(response));
     }
+
+    @DeleteMapping("/{accountNumber}")
+    public ResponseEntity<ApiResponse<Void>> close(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @PathVariable String accountNumber) {
+        accountService.closeAccount(accountNumber, userDetails.getUserId());
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
 }

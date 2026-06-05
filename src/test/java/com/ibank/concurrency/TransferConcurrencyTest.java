@@ -8,12 +8,9 @@ import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.DockerClientFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -36,7 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class TransferConcurrencyTest {
 
     @Container
@@ -52,14 +49,6 @@ class TransferConcurrencyTest {
     private static final String ACC_A = "20260101000001";
     private static final String ACC_B = "20260101000002";
 
-    @BeforeAll
-    static void checkDocker() {
-        Assumptions.assumeTrue(
-            DockerClientFactory.instance().isDockerAvailable(),
-            "Docker를 사용할 수 없어 테스트를 건너뜁니다."
-        );
-    }
-
     @BeforeEach
     void setUp() {
         transactionRepository.deleteAll();
@@ -67,7 +56,7 @@ class TransferConcurrencyTest {
         userRepository.deleteAll();
 
         User user = userRepository.save(User.builder()
-                .loginId("concurrency-test-user")
+                .loginId("concurrency-user")
                 .password(passwordEncoder.encode("pass"))
                 .name("테스트").email("concurrency@test.com")
                 .role(User.UserRole.ROLE_USER).build());
@@ -118,7 +107,7 @@ class TransferConcurrencyTest {
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
 
-        User user = userRepository.findByLoginId("concurrency-test-user").orElseThrow();
+        User user = userRepository.findByLoginId("concurrency-user").orElseThrow();
         accountRepository.save(Account.builder()
                 .accountNumber(ACC_A).owner(user).initialBalance(new BigDecimal("50000")).build());
         accountRepository.save(Account.builder()
@@ -201,7 +190,7 @@ class TransferConcurrencyTest {
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
 
-        User user = userRepository.findByLoginId("concurrency-test-user").orElseThrow();
+        User user = userRepository.findByLoginId("concurrency-user").orElseThrow();
         accountRepository.save(Account.builder()
                 .accountNumber(ACC_A).owner(user).initialBalance(new BigDecimal("5000")).build());
         accountRepository.save(Account.builder()

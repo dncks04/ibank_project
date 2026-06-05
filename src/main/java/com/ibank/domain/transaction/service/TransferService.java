@@ -4,12 +4,15 @@ import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
+import com.ibank.domain.ledger.entity.LedgerDirection;
+import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
 import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.entity.Transaction;
 import com.ibank.domain.transaction.repository.TransactionRepository;
+import com.ibank.global.audit.Audited;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -28,6 +31,7 @@ public class TransferService {
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
+    private final LedgerService ledgerService;
 
     /**
      * 이체 처리 - 비관적 락 사용.
@@ -36,6 +40,7 @@ public class TransferService {
      * 멱등성:     락 획득 전 1차 검증, 락 획득 후 2차 재검증 (double-checked locking).
      *             READ_COMMITTED에서 락 해제 후 상대 스레드가 커밋된 행을 볼 수 있음을 이용.
      */
+    @Audited(action = "TRANSFER")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse transfer(TransferRequest request) {
         // 1차 검증 (락 없음): 명백한 중복 요청 빠른 반환
@@ -77,6 +82,9 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
+        // 복식부기: 출금 계좌 DEBIT, 입금 계좌 CREDIT (합이 0이 되는 두 leg)
+        ledgerService.record(transaction, fromAccount, LedgerDirection.DEBIT, request.amount());
+        ledgerService.record(transaction, toAccount, LedgerDirection.CREDIT, request.amount());
         return TransferResponse.from(transaction);
     }
 
@@ -84,6 +92,7 @@ public class TransferService {
      * HTTP 입금 — 소유권 검증 + 비관적 락.
      * 사용자 요청은 단건이므로 재시도 복잡성 없이 비관적 락으로 단순하게 처리.
      */
+    @Audited(action = "DEPOSIT")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse depositForUser(Long userId, DepositRequest request) {
         if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
@@ -115,6 +124,7 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
+        ledgerService.record(transaction, account, LedgerDirection.CREDIT, request.amount());
         return TransferResponse.from(transaction);
     }
 
@@ -122,6 +132,7 @@ public class TransferService {
      * 출금 — 소유권 검증 + 비관적 락.
      * 잔액 초과 출금 방지를 위해 반드시 비관적 락 사용.
      */
+    @Audited(action = "WITHDRAW")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse withdraw(Long userId, WithdrawRequest request) {
         if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
@@ -153,6 +164,7 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
+        ledgerService.record(transaction, account, LedgerDirection.DEBIT, request.amount());
         return TransferResponse.from(transaction);
     }
 
@@ -185,5 +197,6 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
+        ledgerService.record(transaction, account, LedgerDirection.CREDIT, amount);
     }
 }

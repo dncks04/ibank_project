@@ -5,8 +5,10 @@ import com.ibank.domain.account.dto.AccountResponse;
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
+import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.global.audit.Audited;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +27,9 @@ public class AccountService {
 
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
+    private final LedgerService ledgerService;
 
+    @Audited(action = "ACCOUNT_OPEN")
     @Transactional
     public AccountResponse openAccount(Long userId, AccountOpenRequest request) {
         User owner = userRepository.findById(userId)
@@ -39,7 +43,10 @@ public class AccountService {
                 .initialBalance(request.initialBalance())
                 .build();
 
-        return AccountResponse.from(accountRepository.save(account));
+        Account saved = accountRepository.save(account);
+        // 초기 잔액도 원장에 기록하여 잔액 == 원장 합계 불변식을 유지
+        ledgerService.recordOpening(saved, request.initialBalance());
+        return AccountResponse.from(saved);
     }
 
     @Transactional(readOnly = true)
@@ -70,6 +77,7 @@ public class AccountService {
         throw new IllegalStateException("계좌번호 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     }
 
+    @Audited(action = "ACCOUNT_CLOSE")
     @Transactional
     public void closeAccount(String accountNumber, Long userId) {
         Account account = accountRepository.findByAccountNumberWithLock(accountNumber)

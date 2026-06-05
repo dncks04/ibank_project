@@ -8,6 +8,7 @@ import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
 import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.entity.Transaction;
+import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
@@ -42,6 +43,7 @@ class DepositWithdrawTest {
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private TransactionRepository transactionRepository;
+    @Autowired private LedgerEntryRepository ledgerEntryRepository;
     @Autowired private PasswordEncoder passwordEncoder;
 
     private static final String ACC = "40260101000001";
@@ -50,6 +52,7 @@ class DepositWithdrawTest {
 
     @BeforeEach
     void setUp() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();
@@ -71,6 +74,7 @@ class DepositWithdrawTest {
 
     @AfterEach
     void tearDown() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();

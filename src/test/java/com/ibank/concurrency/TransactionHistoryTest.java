@@ -6,6 +6,7 @@ import com.ibank.domain.transaction.dto.TransactionHistoryResponse;
 import com.ibank.domain.transaction.dto.TransactionSearchRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.entity.Transaction;
+import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransactionQueryService;
 import com.ibank.domain.transaction.service.TransferService;
@@ -44,6 +45,7 @@ class TransactionHistoryTest {
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private TransactionRepository transactionRepository;
+    @Autowired private LedgerEntryRepository ledgerEntryRepository;
     @Autowired private PasswordEncoder passwordEncoder;
 
     private static final String ACC_A = "30260101000001";
@@ -54,6 +56,7 @@ class TransactionHistoryTest {
 
     @BeforeEach
     void setUp() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();
@@ -80,6 +83,7 @@ class TransactionHistoryTest {
 
     @AfterEach
     void tearDown() {
+        ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
         userRepository.deleteAll();

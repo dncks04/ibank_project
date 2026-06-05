@@ -12,8 +12,10 @@
 - **동시성 제어**: 비관적 락 + 낙관적 락을 상황에 맞게 분리 적용, 데드락 회피를 위한 **락 획득 순서 고정**
 - **멱등성(Idempotency)**: 모든 금전 거래에 멱등성 키 → 네트워크 재시도/중복 요청에도 한 번만 반영
 - **정합성 검증**: 동시 이체/입금 시 **총 잔액 보존**과 **음수 잔액 불가**를 통합 테스트로 증명
+- **불변 원장(Ledger)**: 모든 잔액 변동을 복식부기(차변/대변)로 append-only 기록, `잔액 == 원장 합계` 정산(reconciliation) 검증
+- **감사 로그(Audit)**: AOP로 상태 변경 행위(누가·무엇을·결과·IP)를 기록, 실패 시에도 별도 트랜잭션으로 보존
 - **보안**: JWT(access 15분) + 회전형 refresh 토큰(14일), 로그인 brute-force 잠금, 예외 응답의 내부정보 유출 차단
-- **테스트**: Testcontainers 기반 실제 PostgreSQL 통합/동시성 테스트 (총 58개)
+- **테스트**: Testcontainers 기반 실제 PostgreSQL 통합/동시성 테스트 (총 62개)
 - **CI**: GitHub Actions에서 매 PR마다 전체 빌드·테스트
 
 ---
@@ -75,6 +77,8 @@ erDiagram
     USERS ||--o{ ACCOUNTS : owns
     USERS ||--o{ REFRESH_TOKENS : has
     ACCOUNTS ||--o{ TRANSACTIONS : "from/to"
+    ACCOUNTS ||--o{ LEDGER_ENTRIES : records
+    TRANSACTIONS ||--o{ LEDGER_ENTRIES : "legs"
 
     USERS {
         bigint id PK
@@ -106,6 +110,22 @@ erDiagram
         varchar token_hash UK "SHA-256"
         timestamp expires_at
         boolean revoked
+    }
+    LEDGER_ENTRIES {
+        bigint id PK
+        bigint transaction_id FK "nullable=개설"
+        bigint account_id FK
+        varchar direction "CREDIT/DEBIT"
+        numeric amount
+        numeric balance_after
+    }
+    AUDIT_LOGS {
+        bigint id PK
+        varchar actor
+        varchar action
+        varchar target
+        varchar result "SUCCESS/FAILURE"
+        varchar ip
     }
 ```
 
@@ -152,6 +172,30 @@ sequenceDiagram
         S-->>C: 이체 결과 반환
     end
 ```
+
+---
+
+## 원장(Ledger) & 감사 로그(Audit)
+
+### 불변 원장 + 복식부기
+
+`accounts.balance`를 직접 수정하는 대신, 모든 잔액 변동을 **append-only 원장**(`ledger_entries`)에 차변/대변으로 함께 기록합니다.
+
+- **이체** → 출금 계좌 `DEBIT` + 입금 계좌 `CREDIT` 2건(합이 0이 되는 복식부기)
+- 각 항목에 변동 직후 잔액(`balance_after`)을 함께 저장 → 시점별 잔액 추적 가능
+- 계좌 개설 시 초기 잔액도 원장에 기록하여 불변식 유지
+- 원장 기록은 잔액 변경과 **동일 트랜잭션**으로 커밋/롤백
+
+### 정합성 정산 (Reconciliation)
+
+불변식 **`account.balance == SUM(CREDIT) - SUM(DEBIT)`** 을 `ReconciliationService`로 검증합니다. 동시 이체 후에도 모든 계좌에서 이 불변식이 성립함을 통합 테스트로 증명합니다(`LedgerReconciliationTest`).
+
+### 감사 로그 (AOP)
+
+`@Audited` 어노테이션이 붙은 서비스 메서드를 AOP로 가로채 누가(actor)·무엇을(action/target)·결과(SUCCESS/FAILURE)·IP를 기록합니다.
+
+- 감사 기록은 **`REQUIRES_NEW`** 별도 트랜잭션 → 비즈니스 트랜잭션이 롤백되어도 **실패 이력이 보존**됨
+- 어드바이스를 트랜잭션 바깥(`HIGHEST_PRECEDENCE`)에 배치하여 위 동작을 보장
 
 ---
 
@@ -241,8 +285,6 @@ docker run -d --name ibank-db -p 5432:5432 \
 
 ## 향후 개선 (로드맵)
 
-- 불변 원장(ledger) 기반 복식부기 + 잔액 정합성 정산(reconciliation)
-- 감사 로그(audit trail) — AOP 기반 행위 기록
-- Spring Batch 기반 일일 정산/이자 배치
+- Spring Batch 기반 일일 정산/이자 배치 (원장 기반 정산을 배치로 자동화)
 - Redis 기반 분산 레이트리밋/캐시 (다중 인스턴스 대응)
 - 관측성: Micrometer + Prometheus/Grafana, correlation ID 로깅

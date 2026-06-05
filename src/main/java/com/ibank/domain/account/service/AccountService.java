@@ -3,6 +3,7 @@ package com.ibank.domain.account.service;
 import com.ibank.domain.account.dto.AccountOpenRequest;
 import com.ibank.domain.account.dto.AccountResponse;
 import com.ibank.domain.account.entity.Account;
+import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
@@ -44,7 +45,7 @@ public class AccountService {
     @Transactional(readOnly = true)
     public AccountResponse getAccount(String accountNumber, Long userId) {
         Account account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
         validateOwnership(account, userId);
         return AccountResponse.from(account);
@@ -72,7 +73,7 @@ public class AccountService {
     @Transactional
     public void closeAccount(String accountNumber, Long userId) {
         Account account = accountRepository.findByAccountNumberWithLock(accountNumber)
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
         validateOwnership(account, userId);
 

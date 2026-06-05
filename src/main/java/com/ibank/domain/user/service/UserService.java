@@ -3,10 +3,16 @@ package com.ibank.domain.user.service;
 import com.ibank.domain.user.dto.LoginRequest;
 import com.ibank.domain.user.dto.LoginResponse;
 import com.ibank.domain.user.dto.RegisterRequest;
+import com.ibank.domain.user.dto.TokenResponse;
 import com.ibank.domain.user.dto.UserResponse;
 import com.ibank.domain.user.entity.User;
+import com.ibank.domain.user.exception.DuplicateEmailException;
+import com.ibank.domain.user.exception.DuplicateLoginIdException;
+import com.ibank.domain.user.exception.InvalidCredentialsException;
+import com.ibank.domain.user.exception.TooManyLoginAttemptsException;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.global.security.JwtProvider;
+import com.ibank.global.security.LoginAttemptService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -19,14 +25,16 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtProvider jwtProvider;
+    private final RefreshTokenService refreshTokenService;
+    private final LoginAttemptService loginAttemptService;
 
     @Transactional
     public UserResponse register(RegisterRequest request) {
         if (userRepository.existsByLoginId(request.loginId())) {
-            throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
+            throw new DuplicateLoginIdException();
         }
         if (userRepository.existsByEmail(request.email())) {
-            throw new IllegalArgumentException("이미 사용 중인 이메일입니다.");
+            throw new DuplicateEmailException();
         }
 
         User user = User.builder()
@@ -40,16 +48,40 @@ public class UserService {
         return UserResponse.from(userRepository.save(user));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public LoginResponse login(LoginRequest request) {
-        User user = userRepository.findByLoginId(request.loginId())
-                .orElseThrow(() -> new IllegalArgumentException("아이디 또는 비밀번호가 올바르지 않습니다."));
+        String loginId = request.loginId();
 
-        if (!passwordEncoder.matches(request.password(), user.getPassword())) {
-            throw new IllegalArgumentException("아이디 또는 비밀번호가 올바르지 않습니다.");
+        // brute-force 방어: 임계치 초과 시 일시 잠금
+        if (loginAttemptService.isLocked(loginId)) {
+            throw new TooManyLoginAttemptsException(loginId);
         }
 
-        String token = jwtProvider.generate(user.getLoginId(), user.getRole().name());
-        return LoginResponse.of(token, user.getLoginId(), user.getName());
+        User user = userRepository.findByLoginId(loginId).orElse(null);
+        if (user == null || !passwordEncoder.matches(request.password(), user.getPassword())) {
+            loginAttemptService.recordFailure(loginId);
+            throw new InvalidCredentialsException();
+        }
+
+        loginAttemptService.reset(loginId);
+
+        String accessToken = jwtProvider.generateAccessToken(user.getLoginId(), user.getRole().name());
+        String refreshToken = refreshTokenService.issue(user);
+        return LoginResponse.of(accessToken, refreshToken, user.getLoginId(), user.getName());
+    }
+
+    /** 리프레시 토큰 회전: 기존 토큰을 폐기하고 새 access/refresh를 발급한다. */
+    @Transactional
+    public TokenResponse refresh(String rawRefreshToken) {
+        User user = refreshTokenService.rotate(rawRefreshToken);
+        String accessToken = jwtProvider.generateAccessToken(user.getLoginId(), user.getRole().name());
+        String newRefreshToken = refreshTokenService.issue(user);
+        return TokenResponse.of(accessToken, newRefreshToken);
+    }
+
+    /** 로그아웃: 리프레시 토큰 폐기. */
+    @Transactional
+    public void logout(String rawRefreshToken) {
+        refreshTokenService.revoke(rawRefreshToken);
     }
 }

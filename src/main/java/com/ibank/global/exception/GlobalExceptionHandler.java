@@ -16,12 +16,23 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /**
  * 전역 예외 처리.
  *
- * 보안 원칙: 계좌번호·잔액 등 내부 식별자나 원시 DB 오류는 클라이언트로 노출하지 않는다.
+ * 보안 원칙: 계좌번호·잔액·loginId 등 내부 식별자나 원시 DB 오류는 클라이언트로 노출하지 않는다.
  * 상세 원인은 서버 로그로만 남기고, 클라이언트에는 일반화된 메시지를 반환한다.
  */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * 도메인 비즈니스 예외 — 각 예외가 보유한 상태/클라이언트 메시지를 사용.
+     * 상세 메시지는 로그로만 남긴다.
+     */
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException e) {
+        log.warn("{}: {}", e.getClass().getSimpleName(), e.getMessage());
+        return ResponseEntity.status(e.getStatus())
+                .body(ApiResponse.error(e.getClientMessage()));
+    }
 
     @ExceptionHandler(InsufficientBalanceException.class)
     public ResponseEntity<ApiResponse<Void>> handleInsufficientBalance(InsufficientBalanceException e) {

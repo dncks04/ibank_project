@@ -1,6 +1,7 @@
 package com.ibank.domain.transaction.service;
 
 import com.ibank.domain.account.entity.Account;
+import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
 import com.ibank.domain.transaction.dto.TransactionHistoryResponse;
@@ -26,7 +27,7 @@ public class TransactionQueryService {
             String accountNumber, Long userId, TransactionSearchRequest req) {
 
         Account account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
         if (!account.getOwner().getId().equals(userId)) {
             throw new AccountAccessDeniedException(accountNumber);

@@ -11,6 +11,7 @@ import com.ibank.domain.user.exception.DuplicateLoginIdException;
 import com.ibank.domain.user.exception.InvalidCredentialsException;
 import com.ibank.domain.user.exception.TooManyLoginAttemptsException;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.global.audit.Audited;
 import com.ibank.global.security.JwtProvider;
 import com.ibank.global.security.LoginAttemptService;
 import lombok.RequiredArgsConstructor;
@@ -65,7 +66,8 @@ public class UserService {
 
         loginAttemptService.reset(loginId);
 
-        String accessToken = jwtProvider.generateAccessToken(user.getLoginId(), user.getRole().name());
+        String accessToken = jwtProvider.generateAccessToken(
+                user.getLoginId(), user.getRole().name(), user.getTokenVersion());
         String refreshToken = refreshTokenService.issue(user);
         return LoginResponse.of(accessToken, refreshToken, user.getLoginId(), user.getName());
     }
@@ -74,7 +76,8 @@ public class UserService {
     @Transactional
     public TokenResponse refresh(String rawRefreshToken) {
         User user = refreshTokenService.rotate(rawRefreshToken);
-        String accessToken = jwtProvider.generateAccessToken(user.getLoginId(), user.getRole().name());
+        String accessToken = jwtProvider.generateAccessToken(
+                user.getLoginId(), user.getRole().name(), user.getTokenVersion());
         String newRefreshToken = refreshTokenService.issue(user);
         return TokenResponse.of(accessToken, newRefreshToken);
     }
@@ -83,5 +86,16 @@ public class UserService {
     @Transactional
     public void logout(String rawRefreshToken) {
         refreshTokenService.revoke(rawRefreshToken);
+    }
+
+    /**
+     * 전체 세션 즉시 무효화(계정 도용 신고/패닉 로그아웃).
+     * 토큰 버전을 올려 기존 access 토큰을 즉시 무효화하고, 모든 refresh 토큰을 폐기한다.
+     */
+    @Audited(action = "SESSION_INVALIDATE_ALL", target = "#userId")
+    @Transactional
+    public void invalidateAllSessions(Long userId) {
+        userRepository.incrementTokenVersion(userId);
+        refreshTokenService.revokeAll(userId);
     }
 }

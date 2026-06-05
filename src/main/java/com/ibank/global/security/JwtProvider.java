@@ -29,11 +29,12 @@ public class JwtProvider {
     }
 
     /** 짧은 수명의 access 토큰 발급 (인증용). 리프레시 토큰은 별도(불투명) 관리. */
-    public String generateAccessToken(String loginId, String role) {
+    public String generateAccessToken(String loginId, String role, long tokenVersion) {
         Date now = new Date();
         return Jwts.builder()
                 .subject(loginId)
                 .claim("role", role)
+                .claim("tv", tokenVersion)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + accessExpirationMs))
                 .signWith(secretKey)
@@ -58,6 +59,12 @@ public class JwtProvider {
 
     public String getRole(String token) {
         return parseClaims(token).get("role", String.class);
+    }
+
+    /** 토큰의 무효화 버전(tv) 클레임. 구버전 토큰 등 없으면 0으로 간주. */
+    public long getTokenVersion(String token) {
+        Long tv = parseClaims(token).get("tv", Long.class);
+        return tv != null ? tv : 0L;
     }
 
     private Claims parseClaims(String token) {

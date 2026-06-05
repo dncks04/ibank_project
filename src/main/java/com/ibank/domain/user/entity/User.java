@@ -31,6 +31,13 @@ public class User {
     @Column(nullable = false)
     private UserRole role;
 
+    /**
+     * access 토큰 무효화 버전. 토큰 발급 시 이 값을 클레임에 박고 요청마다 일치하는지 검증한다.
+     * 증가시키면 기존 access 토큰이 즉시 무효화된다(stateless JWT의 즉시 차단 경로).
+     */
+    @Column(nullable = false)
+    private long tokenVersion;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 

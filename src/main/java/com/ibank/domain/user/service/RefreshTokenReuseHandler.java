@@ -2,6 +2,7 @@ package com.ibank.domain.user.service;
 
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.RefreshTokenRepository;
+import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.global.audit.AuditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,11 +26,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class RefreshTokenReuseHandler {
 
     private final RefreshTokenRepository refreshTokenRepository;
+    private final UserRepository userRepository;
     private final AuditService auditService;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void handleReuse(User user) {
         int revokedCount = refreshTokenRepository.revokeAllByUserId(user.getId());
+        userRepository.incrementTokenVersion(user.getId()); // 기존 access 토큰도 즉시 무효화
         log.warn("리프레시 토큰 재사용 탐지 — userId={}, 전체 세션 무효화(활성 토큰 {}개 폐기)",
                 user.getId(), revokedCount);
         auditService.record(user.getLoginId(), "REFRESH_TOKEN_REUSE", String.valueOf(user.getId()),

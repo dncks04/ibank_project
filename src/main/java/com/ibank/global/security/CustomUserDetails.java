@@ -18,6 +18,10 @@ public class CustomUserDetails implements UserDetails {
         return user.getId();
     }
 
+    public long getTokenVersion() {
+        return user.getTokenVersion();
+    }
+
     @Override
     public String getUsername() {
         return user.getLoginId();

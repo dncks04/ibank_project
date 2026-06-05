@@ -8,10 +8,12 @@ import com.ibank.domain.user.dto.TokenResponse;
 import com.ibank.domain.user.dto.UserResponse;
 import com.ibank.domain.user.service.UserService;
 import com.ibank.global.response.ApiResponse;
+import com.ibank.global.security.CustomUserDetails;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -46,6 +48,17 @@ public class UserController {
     public ResponseEntity<ApiResponse<Void>> logout(
             @Valid @RequestBody RefreshRequest request) {
         userService.logout(request.refreshToken());
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    /**
+     * 전체 세션 즉시 무효화(계정 도용 신고/패닉 로그아웃). 인증 필요.
+     * 호출자의 모든 access 토큰(즉시)·refresh 토큰을 무효화한다 → 모든 기기 재로그인 필요.
+     */
+    @PostMapping("/sessions/invalidate")
+    public ResponseEntity<ApiResponse<Void>> invalidateAllSessions(
+            @AuthenticationPrincipal CustomUserDetails principal) {
+        userService.invalidateAllSessions(principal.getUserId());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

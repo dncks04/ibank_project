@@ -83,6 +83,12 @@ public class RefreshTokenService {
                 .ifPresent(RefreshToken::revoke);
     }
 
+    /** 특정 사용자의 모든 리프레시 토큰 폐기(전체 세션 무효화). */
+    @Transactional
+    public void revokeAll(Long userId) {
+        refreshTokenRepository.revokeAllByUserId(userId);
+    }
+
     private String generateRawToken() {
         byte[] bytes = new byte[32];
         RANDOM.nextBytes(bytes);

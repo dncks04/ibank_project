@@ -16,7 +16,7 @@ import java.util.Date;
 public class JwtProvider {
 
     private final SecretKey secretKey;
-    private final long expirationMs;
+    private final long accessExpirationMs;
 
     public JwtProvider(JwtProperties props) {
         byte[] keyBytes = props.secret().getBytes(StandardCharsets.UTF_8);
@@ -25,16 +25,17 @@ public class JwtProvider {
             throw new IllegalArgumentException("JWT secret은 최소 32자 이상이어야 합니다.");
         }
         this.secretKey = Keys.hmacShaKeyFor(keyBytes);
-        this.expirationMs = props.expirationMs();
+        this.accessExpirationMs = props.accessExpirationMs();
     }
 
-    public String generate(String loginId, String role) {
+    /** 짧은 수명의 access 토큰 발급 (인증용). 리프레시 토큰은 별도(불투명) 관리. */
+    public String generateAccessToken(String loginId, String role) {
         Date now = new Date();
         return Jwts.builder()
                 .subject(loginId)
                 .claim("role", role)
                 .issuedAt(now)
-                .expiration(new Date(now.getTime() + expirationMs))
+                .expiration(new Date(now.getTime() + accessExpirationMs))
                 .signWith(secretKey)
                 .compact();
     }

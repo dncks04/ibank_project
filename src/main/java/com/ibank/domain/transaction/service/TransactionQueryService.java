@@ -26,7 +26,7 @@ public class TransactionQueryService {
             String accountNumber, Long userId, TransactionSearchRequest req) {
 
         Account account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다: " + accountNumber));
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
 
         if (!account.getOwner().getId().equals(userId)) {
             throw new AccountAccessDeniedException(accountNumber);

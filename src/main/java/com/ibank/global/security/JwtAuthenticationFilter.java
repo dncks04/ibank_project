@@ -27,12 +27,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         String token = resolveToken(request);
 
-        if (token != null && jwtProvider.validate(token)) {
-            String loginId = jwtProvider.getLoginId(token);
+        // 토큰은 요청당 한 번만 검증·파싱하고, 이후 클레임을 재사용한다(서명 검증 1회).
+        io.jsonwebtoken.Claims claims = token != null ? jwtProvider.parse(token) : null;
+        if (claims != null) {
+            String loginId = jwtProvider.getLoginId(claims);
             CustomUserDetails userDetails = (CustomUserDetails) userDetailsService.loadUserByUsername(loginId);
 
             // 즉시 무효화 검사: 토큰 버전이 사용자 현재 버전과 다르면 폐기된 토큰 → 인증하지 않음
-            if (jwtProvider.getTokenVersion(token) == userDetails.getTokenVersion()) {
+            if (jwtProvider.getTokenVersion(claims) == userDetails.getTokenVersion()) {
                 UsernamePasswordAuthenticationToken auth =
                         new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                 auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

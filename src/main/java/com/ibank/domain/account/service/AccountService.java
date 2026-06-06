@@ -3,6 +3,7 @@ package com.ibank.domain.account.service;
 import com.ibank.domain.account.dto.AccountOpenRequest;
 import com.ibank.domain.account.dto.AccountResponse;
 import com.ibank.domain.account.entity.Account;
+import com.ibank.domain.account.exception.AccountNotEmptyException;
 import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.ledger.service.LedgerService;
@@ -86,7 +87,7 @@ public class AccountService {
         validateOwnership(account, userId);
 
         if (account.getBalance().compareTo(java.math.BigDecimal.ZERO) != 0) {
-            throw new IllegalStateException("잔액이 남아있는 계좌는 해지할 수 없습니다.");
+            throw new AccountNotEmptyException();
         }
 
         account.close();

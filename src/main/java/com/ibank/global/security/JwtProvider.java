@@ -41,37 +41,38 @@ public class JwtProvider {
                 .compact();
     }
 
-    public boolean validate(String token) {
+    /**
+     * 토큰을 1회만 검증·파싱하여 클레임을 반환한다. 유효하지 않으면 {@code null}.
+     *
+     * 인증 필터의 핫 패스에서 서명 검증이 요청당 한 번만 일어나도록, 개별 게터를
+     * 여러 번 호출(=여러 번 파싱)하는 대신 이 메서드로 클레임을 한 번 얻어 재사용한다.
+     */
+    public Claims parse(String token) {
         try {
-            parseClaims(token);
-            return true;
+            return Jwts.parser()
+                    .verifyWith(secretKey)
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
         } catch (ExpiredJwtException e) {
             log.debug("만료된 JWT: {}", e.getMessage());
         } catch (JwtException | IllegalArgumentException e) {
             log.debug("유효하지 않은 JWT: {}", e.getMessage());
         }
-        return false;
+        return null;
     }
 
-    public String getLoginId(String token) {
-        return parseClaims(token).getSubject();
+    public String getLoginId(Claims claims) {
+        return claims.getSubject();
     }
 
-    public String getRole(String token) {
-        return parseClaims(token).get("role", String.class);
+    public String getRole(Claims claims) {
+        return claims.get("role", String.class);
     }
 
     /** 토큰의 무효화 버전(tv) 클레임. 구버전 토큰 등 없으면 0으로 간주. */
-    public long getTokenVersion(String token) {
-        Long tv = parseClaims(token).get("tv", Long.class);
+    public long getTokenVersion(Claims claims) {
+        Long tv = claims.get("tv", Long.class);
         return tv != null ? tv : 0L;
-    }
-
-    private Claims parseClaims(String token) {
-        return Jwts.parser()
-                .verifyWith(secretKey)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
     }
 }

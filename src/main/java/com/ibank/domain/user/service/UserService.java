@@ -29,6 +29,18 @@ public class UserService {
     private final RefreshTokenService refreshTokenService;
     private final LoginAttemptService loginAttemptService;
 
+    /**
+     * 존재하지 않는 사용자 로그인 시 timing attack(사용자 열거) 방지를 위한 더미 해시.
+     * 사용자가 없어도 동일한 비용의 bcrypt 비교를 1회 수행해 응답 시간을 평준화한다.
+     * 기동 시 한 번만 인코딩한다.
+     */
+    private String dummyPasswordHash;
+
+    @jakarta.annotation.PostConstruct
+    void initDummyHash() {
+        this.dummyPasswordHash = passwordEncoder.encode("ibank-timing-equalizer");
+    }
+
     @Transactional
     public UserResponse register(RegisterRequest request) {
         if (userRepository.existsByLoginId(request.loginId())) {
@@ -59,7 +71,10 @@ public class UserService {
         }
 
         User user = userRepository.findByLoginId(loginId).orElse(null);
-        if (user == null || !passwordEncoder.matches(request.password(), user.getPassword())) {
+        // 사용자가 없어도 더미 해시로 bcrypt 비교를 수행해 응답 시간을 일정하게 유지(사용자 열거 방지).
+        String passwordHash = (user != null) ? user.getPassword() : dummyPasswordHash;
+        boolean matches = passwordEncoder.matches(request.password(), passwordHash);
+        if (user == null || !matches) {
             loginAttemptService.recordFailure(loginId);
             throw new InvalidCredentialsException();
         }

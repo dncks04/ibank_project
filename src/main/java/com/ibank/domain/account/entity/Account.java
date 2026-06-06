@@ -73,7 +73,7 @@ public class Account {
 
     private void validateActive() {
         if (this.status != AccountStatus.ACTIVE) {
-            throw new IllegalStateException("비활성 계좌입니다.");
+            throw new com.ibank.domain.account.exception.InactiveAccountException();
         }
     }
 

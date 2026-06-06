@@ -44,9 +44,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException e) {
+        // 원문 메시지에 내부 식별자가 섞일 수 있으므로 클라이언트에는 일반화하고 상세는 로그로만 남긴다.
         log.warn("잘못된 요청: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error(e.getMessage()));
+                .body(ApiResponse.error("요청을 처리할 수 없습니다."));
     }
 
     @ExceptionHandler(AccountAccessDeniedException.class)
@@ -74,9 +75,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException e) {
+        // 사용자 대상 상태 위반은 BusinessException으로 표현한다. 여기로 오는 건 예기치 못한 내부 상태이므로
+        // 원문 대신 일반화된 메시지를 반환하고 상세는 로그로만 남긴다.
         log.warn("잘못된 상태: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ApiResponse.error(e.getMessage()));
+                .body(ApiResponse.error("요청을 처리할 수 없습니다."));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -88,5 +91,17 @@ public class GlobalExceptionHandler {
                 .orElse("입력값이 올바르지 않습니다.");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(message));
+    }
+
+    /**
+     * 매핑되지 않은 예기치 못한 예외의 최후 방어선.
+     * 스택트레이스·원시 오류가 응답으로 새어 나가지 않도록 일반화된 500을 반환하고,
+     * 원인은 스택트레이스와 함께 서버 로그에만 남긴다.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnexpected(Exception e) {
+        log.error("처리되지 않은 예외", e);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."));
     }
 }

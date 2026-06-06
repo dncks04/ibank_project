@@ -5,6 +5,8 @@ import com.ibank.domain.user.dto.LoginResponse;
 import com.ibank.domain.user.dto.RegisterRequest;
 import com.ibank.domain.user.dto.UserResponse;
 import com.ibank.domain.user.entity.User;
+import com.ibank.domain.user.exception.DuplicateLoginIdException;
+import com.ibank.domain.user.exception.InvalidCredentialsException;
 import com.ibank.domain.user.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -109,7 +111,7 @@ class UserControllerTest {
     @Test
     @DisplayName("회원가입 - 중복 아이디 시 400 반환")
     void register_duplicateLoginId() throws Exception {
-        willThrow(new IllegalArgumentException("이미 사용 중인 아이디입니다."))
+        willThrow(new DuplicateLoginIdException())
                 .given(userService).register(any());
 
         mockMvc.perform(post("/api/auth/register")
@@ -150,7 +152,7 @@ class UserControllerTest {
     @Test
     @DisplayName("로그인 - 잘못된 자격증명 시 400 반환")
     void login_wrongCredentials() throws Exception {
-        willThrow(new IllegalArgumentException("아이디 또는 비밀번호가 올바르지 않습니다."))
+        willThrow(new InvalidCredentialsException())
                 .given(userService).login(any());
 
         mockMvc.perform(post("/api/auth/login")

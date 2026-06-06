@@ -15,6 +15,7 @@ import com.ibank.global.audit.Audited;
 import com.ibank.global.security.AuthCacheEvictor;
 import com.ibank.global.security.JwtProvider;
 import com.ibank.global.security.LoginAttemptService;
+import com.ibank.global.security.pii.EmailCrypto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ public class UserService {
     private final RefreshTokenService refreshTokenService;
     private final LoginAttemptService loginAttemptService;
     private final AuthCacheEvictor authCacheEvictor;
+    private final EmailCrypto emailCrypto;
 
     /**
      * 존재하지 않는 사용자 로그인 시 timing attack(사용자 열거) 방지를 위한 더미 해시.
@@ -48,7 +50,7 @@ public class UserService {
         if (userRepository.existsByLoginId(request.loginId())) {
             throw new DuplicateLoginIdException();
         }
-        if (userRepository.existsByEmail(request.email())) {
+        if (userRepository.existsByEmailBlindIndex(emailCrypto.blindIndex(request.email()))) {
             throw new DuplicateEmailException();
         }
 

@@ -14,7 +14,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByLoginId(String loginId);
 
-    boolean existsByEmail(String email);
+    /** email 중복 검사는 암호문이 아닌 blind index(결정적 HMAC)로 한다. */
+    boolean existsByEmailBlindIndex(String emailBlindIndex);
 
     /** 토큰 버전 증가 → 기존 access 토큰 즉시 무효화. */
     @Modifying

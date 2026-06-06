@@ -1,5 +1,6 @@
 package com.ibank.domain.user.entity;
 
+import com.ibank.global.security.pii.EmailEncryptConverter;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -7,6 +8,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "users")
+@EntityListeners(UserPiiListener.class)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class User {
@@ -24,8 +26,14 @@ public class User {
     @Column(nullable = false)
     private String name;
 
-    @Column(nullable = false, unique = true)
+    /** PII: at-rest 암호화(AES-GCM) 저장. 엔티티에는 평문으로 노출된다. 동등 조회/유니크는 {@link #emailBlindIndex} 사용. */
+    @Convert(converter = EmailEncryptConverter.class)
+    @Column(name = "email", nullable = false, length = 512)
     private String email;
+
+    /** email의 blind index(HMAC). 암호문은 유니크/조회가 불가하므로 결정적 인덱스를 분리 저장한다. 리스너가 채운다. */
+    @Column(name = "email_bidx", nullable = false, unique = true, length = 64)
+    private String emailBlindIndex;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -49,6 +57,11 @@ public class User {
         this.email = email;
         this.role = role;
         this.createdAt = LocalDateTime.now();
+    }
+
+    /** {@link UserPiiListener}가 저장/수정 직전 email로부터 계산한 blind index를 채운다. */
+    void assignEmailBlindIndex(String emailBlindIndex) {
+        this.emailBlindIndex = emailBlindIndex;
     }
 
     public enum UserRole {

@@ -10,8 +10,8 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "transactions", indexes = {
-    @Index(name = "idx_transaction_from_account", columnList = "from_account_id"),
-    @Index(name = "idx_transaction_to_account", columnList = "to_account_id"),
+    @Index(name = "idx_transaction_from_account_created", columnList = "from_account_id, created_at DESC"),
+    @Index(name = "idx_transaction_to_account_created", columnList = "to_account_id, created_at DESC"),
     @Index(name = "idx_transaction_idempotency_key", columnList = "idempotency_key", unique = true)
 })
 @Getter

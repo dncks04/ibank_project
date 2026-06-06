@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +34,11 @@ public class TransferService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final LedgerService ledgerService;
+
+    /** 멱등성 키로 기존 거래를 단일 쿼리로 조회. 중복 요청이면 기존 결과를 반환한다. */
+    private Optional<TransferResponse> findByIdempotencyKey(String idempotencyKey) {
+        return transactionRepository.findByIdempotencyKey(idempotencyKey).map(TransferResponse::from);
+    }
 
     /**
      * 이체 처리 - 비관적 락 사용.
@@ -50,9 +56,9 @@ public class TransferService {
         }
 
         // 1차 검증 (락 없음): 명백한 중복 요청 빠른 반환
-        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
-            return TransferResponse.from(
-                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        Optional<TransferResponse> existing = findByIdempotencyKey(request.idempotencyKey());
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
         // 데드락 방지: 항상 계좌 번호 오름차순으로 락 획득
@@ -66,9 +72,9 @@ public class TransferService {
 
         // 2차 검증 (락 보유 상태): 동시 요청이 동일 key로 락을 대기 후 진입한 경우 방어
         // READ_COMMITTED이므로 락 대기 중 상대 스레드가 커밋하면 이 시점에 보임
-        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
-            return TransferResponse.from(
-                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        existing = findByIdempotencyKey(request.idempotencyKey());
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
         Account fromAccount = first.getAccountNumber().equals(request.fromAccountNumber()) ? first : second;
@@ -101,9 +107,9 @@ public class TransferService {
     @Audited(action = "DEPOSIT", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse depositForUser(Long userId, DepositRequest request) {
-        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
-            return TransferResponse.from(
-                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        Optional<TransferResponse> existing = findByIdempotencyKey(request.idempotencyKey());
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
         Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
@@ -113,9 +119,9 @@ public class TransferService {
             throw new AccountAccessDeniedException(request.accountNumber());
         }
 
-        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
-            return TransferResponse.from(
-                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        existing = findByIdempotencyKey(request.idempotencyKey());
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
         account.deposit(request.amount());
@@ -141,9 +147,9 @@ public class TransferService {
     @Audited(action = "WITHDRAW", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse withdraw(Long userId, WithdrawRequest request) {
-        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
-            return TransferResponse.from(
-                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        Optional<TransferResponse> existing = findByIdempotencyKey(request.idempotencyKey());
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
         Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
@@ -153,9 +159,9 @@ public class TransferService {
             throw new AccountAccessDeniedException(request.accountNumber());
         }
 
-        if (transactionRepository.existsByIdempotencyKey(request.idempotencyKey())) {
-            return TransferResponse.from(
-                    transactionRepository.findByIdempotencyKey(request.idempotencyKey()).orElseThrow());
+        existing = findByIdempotencyKey(request.idempotencyKey());
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
         account.withdraw(request.amount());

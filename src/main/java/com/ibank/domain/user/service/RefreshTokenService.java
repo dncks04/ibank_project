@@ -52,18 +52,24 @@ public class RefreshTokenService {
     /**
      * 리프레시 토큰 검증 후 회전(기존 폐기 + 사용자 반환). 호출자는 반환된 사용자로 새 토큰을 발급한다.
      *
-     * 재사용 탐지: 이미 회전으로 폐기된 토큰이 다시 들어오면 탈취로 간주하여 전체 세션을 무효화한다
-     * ({@link RefreshTokenReuseHandler}). 로그아웃으로 폐기된 토큰의 재제출은 단순 거부한다.
+     * <p><b>비관적 락</b>: 회전은 check-then-act(폐기 여부 확인 → 회전)이므로 행 락으로 직렬화한다.
+     * 락이 없으면 동일 토큰 동시 /refresh가 둘 다 {@code revoked=false}를 읽고 둘 다 회전에 성공해
+     * 토큰 패밀리가 갈라진다.
+     *
+     * <p>재사용 탐지: 이미 회전으로 폐기된 토큰이 다시 들어오면 탈취로 간주해 전체 세션을 무효화한다
+     * ({@link RefreshTokenReuseHandler}). 단, 회전 직후 유예창 안의 재제출은 정상 동시 재시도로 보고
+     * 무효화 없이 단순 거부한다(재시도/더블클릭 오탐 방지). 로그아웃으로 폐기된 토큰의 재제출도 단순 거부한다.
      */
     @Transactional
     public User rotate(String rawToken) {
-        RefreshToken token = refreshTokenRepository.findByTokenHash(hash(rawToken))
+        RefreshToken token = refreshTokenRepository.findByTokenHashWithLock(hash(rawToken))
                 .orElseThrow(InvalidRefreshTokenException::new);
 
         if (token.isRevoked()) {
-            // 회전으로 폐기된 토큰의 재사용만 탈취 신호 → 전체 세션 무효화 + 경보 (별도 트랜잭션 커밋)
-            if (token.isRotated()) {
-                reuseHandler.handleReuse(token.getUser());
+            // 회전으로 폐기된 토큰의 재사용만 탈취 신호. 단, 유예창 안의 재제출은 동시 재시도이므로 제외한다.
+            Duration leeway = Duration.ofMillis(jwtProperties.refreshReuseLeewayMs());
+            if (token.isRotated() && !token.isWithinReuseLeeway(LocalDateTime.now(), leeway)) {
+                reuseHandler.handleReuse(token.getUser()); // 전체 세션 무효화 + 경보 (별도 트랜잭션 커밋)
             }
             throw new InvalidRefreshTokenException();
         }

@@ -3,6 +3,7 @@ package com.ibank.domain.user.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
@@ -36,6 +37,10 @@ public class RefreshToken {
     @Column(nullable = false)
     private boolean rotated;
 
+    /** 회전된 시각. 회전 직후 유예창 안의 재제출(정상 동시 재시도)과 진짜 재사용을 구분하는 기준. */
+    @Column
+    private LocalDateTime rotatedAt;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -58,9 +63,18 @@ public class RefreshToken {
     public void markRotated() {
         this.revoked = true;
         this.rotated = true;
+        this.rotatedAt = LocalDateTime.now();
     }
 
     public boolean isExpired(LocalDateTime now) {
         return !expiresAt.isAfter(now);
+    }
+
+    /**
+     * 회전 직후 유예창 안의 재제출인지. true이면 탈취가 아니라 정상 동시 재시도(클라이언트 재시도/더블클릭)로 보고
+     * 전체 세션 무효화 없이 단순 거부한다. {@code rotatedAt}이 없는(과거) 토큰은 유예창에 들지 않는다.
+     */
+    public boolean isWithinReuseLeeway(LocalDateTime now, Duration leeway) {
+        return rotatedAt != null && !now.isAfter(rotatedAt.plus(leeway));
     }
 }

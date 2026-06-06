@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -26,6 +27,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Testcontainers(disabledWithoutDocker = true)
+// 유예창 0: 회전 직후의 순차 재사용을 탈취로 탐지하는 단위 시나리오를 검증한다.
+// 유예창 안의 정상 동시 재시도(세션 보존)는 RefreshTokenRotationConcurrencyTest에서 별도 검증한다.
+@TestPropertySource(properties = "jwt.refresh-reuse-leeway-ms=0")
 class AuthTokenFlowTest {
 
     @Container

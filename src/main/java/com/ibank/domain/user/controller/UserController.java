@@ -9,6 +9,8 @@ import com.ibank.domain.user.dto.UserResponse;
 import com.ibank.domain.user.service.UserService;
 import com.ibank.global.response.ApiResponse;
 import com.ibank.global.security.CustomUserDetails;
+import com.ibank.global.web.ClientIpResolver;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
+    private final ClientIpResolver clientIpResolver;
 
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<UserResponse>> register(
@@ -32,8 +35,9 @@ public class UserController {
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<LoginResponse>> login(
-            @Valid @RequestBody LoginRequest request) {
-        LoginResponse response = userService.login(request);
+            @Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        String clientIp = clientIpResolver.resolve(httpRequest);
+        LoginResponse response = userService.login(request, clientIp);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 

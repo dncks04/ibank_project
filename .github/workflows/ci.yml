@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+# v4 액션들이 곧 deprecated되는 Node.js 20 대신 Node.js 24로 동작하도록 opt-in
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

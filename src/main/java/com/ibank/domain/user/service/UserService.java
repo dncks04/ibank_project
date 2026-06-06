@@ -61,12 +61,19 @@ public class UserService {
         return UserResponse.from(userRepository.save(user));
     }
 
+    /** IP 정보가 없는 경로(내부 호출/테스트)용 오버로드. */
     @Transactional
     public LoginResponse login(LoginRequest request) {
+        return login(request, null);
+    }
+
+    @Transactional
+    public LoginResponse login(LoginRequest request, String clientIp) {
         String loginId = request.loginId();
 
-        // brute-force 방어: 임계치 초과 시 일시 잠금
-        if (loginAttemptService.isLocked(loginId)) {
+        // brute-force 방어: 계정 단위 + 출발지 IP 단위(분산 시도) 임계치 초과 시 일시 잠금
+        if (loginAttemptService.isLocked(loginId)
+                || (clientIp != null && loginAttemptService.isIpLocked(clientIp))) {
             throw new TooManyLoginAttemptsException(loginId);
         }
 
@@ -76,6 +83,9 @@ public class UserService {
         boolean matches = passwordEncoder.matches(request.password(), passwordHash);
         if (user == null || !matches) {
             loginAttemptService.recordFailure(loginId);
+            if (clientIp != null) {
+                loginAttemptService.recordIpFailure(clientIp);
+            }
             throw new InvalidCredentialsException();
         }
 

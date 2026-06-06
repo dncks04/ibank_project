@@ -132,7 +132,7 @@ class UserControllerTest {
     @Test
     @DisplayName("로그인 성공 - 200 반환 및 토큰 포함")
     void login_success() throws Exception {
-        given(userService.login(any()))
+        given(userService.login(any(), any()))
                 .willReturn(LoginResponse.of("jwt-token", "testuser", "테스터"));
 
         mockMvc.perform(post("/api/auth/login")
@@ -153,7 +153,7 @@ class UserControllerTest {
     @DisplayName("로그인 - 잘못된 자격증명 시 400 반환")
     void login_wrongCredentials() throws Exception {
         willThrow(new InvalidCredentialsException())
-                .given(userService).login(any());
+                .given(userService).login(any(), any());
 
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)

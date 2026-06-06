@@ -1,6 +1,7 @@
 package com.ibank.global.config;
 
 import com.ibank.global.security.JwtAuthenticationFilter;
+import com.ibank.global.security.RateLimitFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -21,11 +22,12 @@ import java.nio.charset.StandardCharsets;
 
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties({JwtProperties.class, PiiProperties.class})
+@EnableConfigurationProperties({JwtProperties.class, PiiProperties.class, RateLimitProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -45,7 +47,9 @@ public class SecurityConfig {
                 .accessDeniedHandler((request, response, e) ->
                     sendError(response, HttpServletResponse.SC_FORBIDDEN, "접근 권한이 없습니다."))
             )
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+            // 호출 제한은 인증보다 먼저: 과도한 요청을 인증·DB 작업 전에 차단한다.
+            .addFilterBefore(rateLimitFilter, JwtAuthenticationFilter.class);
 
         return http.build();
     }

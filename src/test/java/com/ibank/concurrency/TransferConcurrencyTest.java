@@ -51,6 +51,8 @@ class TransferConcurrencyTest {
     private static final String ACC_A = "20260101000001";
     private static final String ACC_B = "20260101000002";
 
+    private Long userId;
+
     @BeforeEach
     void setUp() {
         ledgerEntryRepository.deleteAll();
@@ -63,6 +65,7 @@ class TransferConcurrencyTest {
                 .password(passwordEncoder.encode("pass"))
                 .name("테스트").email("concurrency@test.com")
                 .role(User.UserRole.ROLE_USER).build());
+        userId = user.getId();
 
         accountRepository.save(Account.builder()
                 .accountNumber(ACC_A).owner(user)
@@ -87,7 +90,7 @@ class TransferConcurrencyTest {
         BigDecimal amount = new BigDecimal("1000");
 
         List<Throwable> errors = runConcurrently(threadCount, () ->
-                transferService.transfer(new TransferRequest(
+                transferService.transfer(userId, new TransferRequest(
                         UUID.randomUUID().toString(), ACC_A, ACC_B, amount, "잔액보존테스트"))
         );
 
@@ -129,7 +132,7 @@ class TransferConcurrencyTest {
             executor.submit(() -> {
                 try {
                     startLatch.await();
-                    transferService.transfer(new TransferRequest(
+                    transferService.transfer(userId, new TransferRequest(
                             UUID.randomUUID().toString(), ACC_A, ACC_B, amount, "A→B"));
                 } catch (Throwable t) {
                     errors.add(t);
@@ -140,7 +143,7 @@ class TransferConcurrencyTest {
             executor.submit(() -> {
                 try {
                     startLatch.await();
-                    transferService.transfer(new TransferRequest(
+                    transferService.transfer(userId, new TransferRequest(
                             UUID.randomUUID().toString(), ACC_B, ACC_A, amount, "B→A"));
                 } catch (Throwable t) {
                     errors.add(t);
@@ -174,7 +177,7 @@ class TransferConcurrencyTest {
 
         AtomicInteger successCount = new AtomicInteger();
         runConcurrently(threadCount, () -> {
-            transferService.transfer(new TransferRequest(sharedKey, ACC_A, ACC_B, amount, "멱등성테스트"));
+            transferService.transfer(userId, new TransferRequest(sharedKey, ACC_A, ACC_B, amount, "멱등성테스트"));
             successCount.incrementAndGet();
         });
 
@@ -215,7 +218,7 @@ class TransferConcurrencyTest {
             executor.submit(() -> {
                 try {
                     startLatch.await();
-                    transferService.transfer(new TransferRequest(
+                    transferService.transfer(userId, new TransferRequest(
                             UUID.randomUUID().toString(), ACC_A, ACC_B, amount, "잔액초과테스트"));
                     successCount.incrementAndGet();
                 } catch (Exception e) {

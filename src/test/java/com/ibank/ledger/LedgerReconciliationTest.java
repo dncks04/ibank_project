@@ -61,6 +61,7 @@ class LedgerReconciliationTest {
     private String accB;
     private Long accAId;
     private Long accBId;
+    private Long userId;
 
     @BeforeEach
     void setUp() {
@@ -73,6 +74,7 @@ class LedgerReconciliationTest {
                 .loginId("ledger-user").password("x")
                 .name("원장유저").email("ledger@test.com")
                 .role(User.UserRole.ROLE_USER).build());
+        userId = user.getId();
 
         AccountResponse a = accountService.openAccount(user.getId(),
                 new AccountOpenRequest(new BigDecimal("100000")));
@@ -100,7 +102,7 @@ class LedgerReconciliationTest {
         int n = 30;
         BigDecimal amount = new BigDecimal("100");
 
-        runConcurrently(n, () -> transferService.transfer(new TransferRequest(
+        runConcurrently(n, () -> transferService.transfer(userId, new TransferRequest(
                 UUID.randomUUID().toString(), accA, accB, amount, "정합성 테스트")));
 
         // 전 계좌 정합성 OK (불일치 계좌 없음)
@@ -131,7 +133,7 @@ class LedgerReconciliationTest {
     @Test
     @DisplayName("동일 계좌 이체는 거부되고 거래·원장이 전혀 생성되지 않는다")
     void selfTransfer_rejected_noSideEffects() {
-        assertThatThrownBy(() -> transferService.transfer(new TransferRequest(
+        assertThatThrownBy(() -> transferService.transfer(userId, new TransferRequest(
                 UUID.randomUUID().toString(), accA, accA, new BigDecimal("1000"), "자기이체")))
                 .isInstanceOf(SameAccountTransferException.class);
 

@@ -92,7 +92,7 @@ class TransactionHistoryTest {
     @Test
     @DisplayName("이체 후 송금 계좌 거래 내역에 TRANSFER 타입으로 조회된다")
     void history_afterTransfer_appearsInSenderHistory() {
-        transferService.transfer(new TransferRequest(
+        transferService.transfer(userAId, new TransferRequest(
                 UUID.randomUUID().toString(), ACC_A, ACC_B,
                 new BigDecimal("5000"), "테스트 이체"));
 
@@ -110,7 +110,7 @@ class TransactionHistoryTest {
     @Test
     @DisplayName("이체 후 수신 계좌 거래 내역에도 동일 거래가 조회된다")
     void history_afterTransfer_appearsInReceiverHistory() {
-        transferService.transfer(new TransferRequest(
+        transferService.transfer(userAId, new TransferRequest(
                 UUID.randomUUID().toString(), ACC_A, ACC_B,
                 new BigDecimal("3000"), "수신 테스트"));
 
@@ -125,7 +125,7 @@ class TransactionHistoryTest {
     @DisplayName("여러 건 이체 후 최신순으로 페이징된다")
     void history_multipleTransfers_orderedByCreatedAtDesc() {
         for (int i = 0; i < 5; i++) {
-            transferService.transfer(new TransferRequest(
+            transferService.transfer(userAId, new TransferRequest(
                     UUID.randomUUID().toString(), ACC_A, ACC_B,
                     new BigDecimal("1000"), "이체 " + i));
         }
@@ -147,7 +147,7 @@ class TransactionHistoryTest {
     @Test
     @DisplayName("날짜 범위 필터가 적용된다")
     void history_dateRangeFilter_appliedCorrectly() {
-        transferService.transfer(new TransferRequest(
+        transferService.transfer(userAId, new TransferRequest(
                 UUID.randomUUID().toString(), ACC_A, ACC_B,
                 new BigDecimal("1000"), "날짜 필터 테스트"));
 
@@ -171,6 +171,23 @@ class TransactionHistoryTest {
             queryService.getHistory(ACC_A, userBId,
                     TransactionSearchRequest.of(null, null, 0, 20))
         ).isInstanceOf(com.ibank.domain.account.service.AccountAccessDeniedException.class);
+    }
+
+    @Test
+    @DisplayName("타인 계좌에서 출금하는 이체는 거부되고 잔액·거래가 변하지 않는다")
+    void transfer_fromOthersAccount_rejected_noSideEffects() {
+        // userB가 userA 소유 ACC_A에서 출금 시도 → 소유권 위반으로 거부되어야 한다
+        assertThatThrownBy(() -> transferService.transfer(userBId, new TransferRequest(
+                UUID.randomUUID().toString(), ACC_A, ACC_B,
+                new BigDecimal("5000"), "권한 없는 이체")))
+                .isInstanceOf(com.ibank.domain.account.service.AccountAccessDeniedException.class);
+
+        // 잔액 불변 + 거래 미생성
+        assertThat(accountRepository.findByAccountNumber(ACC_A).orElseThrow().getBalance())
+                .isEqualByComparingTo(new BigDecimal("100000"));
+        assertThat(accountRepository.findByAccountNumber(ACC_B).orElseThrow().getBalance())
+                .isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(transactionRepository.count()).isZero();
     }
 
     @Test

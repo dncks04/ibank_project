@@ -206,7 +206,7 @@ class TransactionControllerTest {
     @Test
     @DisplayName("이체 성공 - 200 반환")
     void transfer_success() throws Exception {
-        given(transferService.transfer(any()))
+        given(transferService.transfer(eq(USER_ID), any()))
                 .willReturn(sampleTransferResponse(ACC_A, ACC_B));
 
         mockMvc.perform(post("/api/transactions/transfer")
@@ -225,6 +225,43 @@ class TransactionControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.fromAccountNumber").value(ACC_A))
                 .andExpect(jsonPath("$.data.toAccountNumber").value(ACC_B));
+    }
+
+    @Test
+    @DisplayName("이체 - 타인 계좌 출금 시도 시 403 반환")
+    void transfer_forbidden() throws Exception {
+        willThrow(new AccountAccessDeniedException(ACC_A))
+                .given(transferService).transfer(eq(USER_ID), any());
+
+        mockMvc.perform(post("/api/transactions/transfer")
+                        .with(user(mockUser())).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "idempotencyKey": "%s",
+                                  "fromAccountNumber": "%s",
+                                  "toAccountNumber": "%s",
+                                  "amount": 5000
+                                }
+                                """.formatted(UUID.randomUUID(), ACC_A, ACC_B)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("이체 - 인증 없으면 401 반환")
+    void transfer_unauthorized() throws Exception {
+        mockMvc.perform(post("/api/transactions/transfer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "idempotencyKey": "%s",
+                                  "fromAccountNumber": "%s",
+                                  "toAccountNumber": "%s",
+                                  "amount": 5000
+                                }
+                                """.formatted(UUID.randomUUID(), ACC_A, ACC_B)))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

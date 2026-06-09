@@ -43,13 +43,14 @@ public class TransferService {
     /**
      * 이체 처리 - 비관적 락 사용.
      *
+     * 소유권:     출금 계좌(fromAccount)는 반드시 요청자 본인 소유여야 한다. 타인 계좌 출금을 차단한다.
      * 데드락 방지: account_number 오름차순으로 락 획득 (전역 락 순서 고정).
      * 멱등성:     락 획득 전 1차 검증, 락 획득 후 2차 재검증 (double-checked locking).
      *             READ_COMMITTED에서 락 해제 후 상대 스레드가 커밋된 행을 볼 수 있음을 이용.
      */
     @Audited(action = "TRANSFER", target = "#request.fromAccountNumber + '→' + #request.toAccountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public TransferResponse transfer(TransferRequest request) {
+    public TransferResponse transfer(Long userId, TransferRequest request) {
         // 동일 계좌 이체 차단: 락/멱등성 키 소모·무의미한 거래·원장 leg 생성 전에 fail-fast
         if (request.fromAccountNumber().equals(request.toAccountNumber())) {
             throw new SameAccountTransferException(request.fromAccountNumber());
@@ -79,6 +80,11 @@ public class TransferService {
 
         Account fromAccount = first.getAccountNumber().equals(request.fromAccountNumber()) ? first : second;
         Account toAccount   = first.getAccountNumber().equals(request.toAccountNumber())   ? first : second;
+
+        // 소유권 검증: 출금 계좌는 반드시 요청자 본인 소유여야 한다 (타인 계좌 출금 차단)
+        if (!fromAccount.getOwner().getId().equals(userId)) {
+            throw new AccountAccessDeniedException(request.fromAccountNumber());
+        }
 
         fromAccount.withdraw(request.amount());
         toAccount.deposit(request.amount());

@@ -111,7 +111,7 @@ class AuditLogTest {
     @Test
     @DisplayName("이체 감사 로그 target에는 출금→입금 계좌가 모두 남는다")
     void transfer_success_recordsBothAccountsInTarget() {
-        transferService.transfer(new TransferRequest(
+        transferService.transfer(ownerId, new TransferRequest(
                 UUID.randomUUID().toString(), ACC, ACC2, new BigDecimal("1000"), "이체 감사 테스트"));
 
         assertThat(auditLogRepository.findAll())

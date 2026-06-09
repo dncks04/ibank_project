@@ -46,8 +46,10 @@ public class TransactionController {
 
     @PostMapping("/transactions/transfer")
     public ResponseEntity<ApiResponse<TransferResponse>> transfer(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
             @Valid @RequestBody TransferRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(transferService.transfer(request)));
+        return ResponseEntity.ok(ApiResponse.success(
+                transferService.transfer(userDetails.getUserId(), request)));
     }
 
     /**

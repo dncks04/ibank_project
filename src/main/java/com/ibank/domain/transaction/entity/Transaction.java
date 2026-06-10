@@ -26,6 +26,10 @@ public class Transaction {
     @Column(nullable = false, unique = true)
     private String idempotencyKey;
 
+    // 요청 지문: 같은 멱등성 키가 다른 내용의 요청에 재사용되었는지 식별 (replay 안전성)
+    @Column(length = 64)
+    private String requestFingerprint;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "from_account_id")
     private Account fromAccount;
@@ -66,6 +70,13 @@ public class Transaction {
 
     public Transaction withIdempotencyKey(String key) {
         this.idempotencyKey = key;
+        return this;
+    }
+
+    /** 멱등성 키와 함께 요청 지문을 기록한다 (재요청 시 동일 요청인지 검증하기 위함). */
+    public Transaction withIdempotency(String key, String requestFingerprint) {
+        this.idempotencyKey = key;
+        this.requestFingerprint = requestFingerprint;
         return this;
     }
 

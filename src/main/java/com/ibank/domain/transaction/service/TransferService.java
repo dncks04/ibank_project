@@ -11,6 +11,7 @@ import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
 import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.entity.Transaction;
+import com.ibank.domain.transaction.exception.IdempotencyKeyConflictException;
 import com.ibank.domain.transaction.exception.SameAccountTransferException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.global.audit.Audited;
@@ -35,9 +36,27 @@ public class TransferService {
     private final TransactionRepository transactionRepository;
     private final LedgerService ledgerService;
 
-    /** 멱등성 키로 기존 거래를 단일 쿼리로 조회. 중복 요청이면 기존 결과를 반환한다. */
-    private Optional<TransferResponse> findByIdempotencyKey(String idempotencyKey) {
-        return transactionRepository.findByIdempotencyKey(idempotencyKey).map(TransferResponse::from);
+    /**
+     * 멱등성 키로 기존 거래를 조회해 replay 여부를 결정한다.
+     *
+     * - 기존 거래가 없으면 {@code Optional.empty()} (정상 처리 진행).
+     * - 기존 거래가 있고 요청 지문이 일치하면 기존 결과를 반환(진정한 중복 요청 → replay).
+     * - 기존 거래가 있으나 지문이 불일치하면 같은 키가 다른 내용에 재사용된 것이므로
+     *   {@link IdempotencyKeyConflictException}(409)로 거부한다. 옛 결과를 조용히 반환하지 않는다.
+     */
+    private Optional<TransferResponse> replayIfPresent(String idempotencyKey, String fingerprint) {
+        return transactionRepository.findByIdempotencyKey(idempotencyKey)
+                .map(tx -> {
+                    verifyFingerprint(tx, idempotencyKey, fingerprint);
+                    return TransferResponse.from(tx);
+                });
+    }
+
+    /** 저장된 거래의 지문과 요청 지문이 다르면 멱등성 키 충돌로 간주한다. */
+    private void verifyFingerprint(Transaction existing, String idempotencyKey, String fingerprint) {
+        if (!fingerprint.equals(existing.getRequestFingerprint())) {
+            throw new IdempotencyKeyConflictException(idempotencyKey);
+        }
     }
 
     /**
@@ -56,8 +75,15 @@ public class TransferService {
             throw new SameAccountTransferException(request.fromAccountNumber());
         }
 
+        // 요청 지문: 같은 멱등성 키가 다른 금액/계좌에 재사용되면 충돌로 거부하기 위함
+        String fingerprint = IdempotencyFingerprint.of(
+                Transaction.TransactionType.TRANSFER.name(),
+                request.fromAccountNumber(),
+                request.toAccountNumber(),
+                IdempotencyFingerprint.normalizeAmount(request.amount()));
+
         // 1차 검증 (락 없음): 명백한 중복 요청 빠른 반환
-        Optional<TransferResponse> existing = findByIdempotencyKey(request.idempotencyKey());
+        Optional<TransferResponse> existing = replayIfPresent(request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -73,7 +99,7 @@ public class TransferService {
 
         // 2차 검증 (락 보유 상태): 동시 요청이 동일 key로 락을 대기 후 진입한 경우 방어
         // READ_COMMITTED이므로 락 대기 중 상대 스레드가 커밋하면 이 시점에 보임
-        existing = findByIdempotencyKey(request.idempotencyKey());
+        existing = replayIfPresent(request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -96,7 +122,7 @@ public class TransferService {
                 .type(Transaction.TransactionType.TRANSFER)
                 .description(request.description())
                 .build()
-                .withIdempotencyKey(request.idempotencyKey());
+                .withIdempotency(request.idempotencyKey(), fingerprint);
         transaction.complete();
 
         transactionRepository.save(transaction);
@@ -113,7 +139,12 @@ public class TransferService {
     @Audited(action = "DEPOSIT", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse depositForUser(Long userId, DepositRequest request) {
-        Optional<TransferResponse> existing = findByIdempotencyKey(request.idempotencyKey());
+        String fingerprint = IdempotencyFingerprint.of(
+                Transaction.TransactionType.DEPOSIT.name(),
+                request.accountNumber(),
+                IdempotencyFingerprint.normalizeAmount(request.amount()));
+
+        Optional<TransferResponse> existing = replayIfPresent(request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -125,7 +156,7 @@ public class TransferService {
             throw new AccountAccessDeniedException(request.accountNumber());
         }
 
-        existing = findByIdempotencyKey(request.idempotencyKey());
+        existing = replayIfPresent(request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -138,7 +169,7 @@ public class TransferService {
                 .type(Transaction.TransactionType.DEPOSIT)
                 .description(request.description())
                 .build()
-                .withIdempotencyKey(request.idempotencyKey());
+                .withIdempotency(request.idempotencyKey(), fingerprint);
         transaction.complete();
 
         transactionRepository.save(transaction);
@@ -153,7 +184,12 @@ public class TransferService {
     @Audited(action = "WITHDRAW", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse withdraw(Long userId, WithdrawRequest request) {
-        Optional<TransferResponse> existing = findByIdempotencyKey(request.idempotencyKey());
+        String fingerprint = IdempotencyFingerprint.of(
+                Transaction.TransactionType.WITHDRAWAL.name(),
+                request.accountNumber(),
+                IdempotencyFingerprint.normalizeAmount(request.amount()));
+
+        Optional<TransferResponse> existing = replayIfPresent(request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -165,7 +201,7 @@ public class TransferService {
             throw new AccountAccessDeniedException(request.accountNumber());
         }
 
-        existing = findByIdempotencyKey(request.idempotencyKey());
+        existing = replayIfPresent(request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -178,7 +214,7 @@ public class TransferService {
                 .type(Transaction.TransactionType.WITHDRAWAL)
                 .description(request.description())
                 .build()
-                .withIdempotencyKey(request.idempotencyKey());
+                .withIdempotency(request.idempotencyKey(), fingerprint);
         transaction.complete();
 
         transactionRepository.save(transaction);
@@ -197,7 +233,14 @@ public class TransferService {
     )
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void deposit(String accountNumber, BigDecimal amount, String idempotencyKey) {
-        if (transactionRepository.existsByIdempotencyKey(idempotencyKey)) {
+        String fingerprint = IdempotencyFingerprint.of(
+                Transaction.TransactionType.DEPOSIT.name(),
+                accountNumber,
+                IdempotencyFingerprint.normalizeAmount(amount));
+
+        Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            verifyFingerprint(existing.get(), idempotencyKey, fingerprint);
             return;
         }
 
@@ -211,7 +254,7 @@ public class TransferService {
                 .amount(amount)
                 .type(Transaction.TransactionType.DEPOSIT)
                 .build()
-                .withIdempotencyKey(idempotencyKey);
+                .withIdempotency(idempotencyKey, fingerprint);
         transaction.complete();
 
         transactionRepository.save(transaction);

@@ -14,8 +14,6 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
     Optional<Transaction> findByIdempotencyKey(String idempotencyKey);
 
-    boolean existsByIdempotencyKey(String idempotencyKey);
-
     /**
      * 특정 계좌가 출금 또는 입금에 관여한 거래 내역 조회 (페이징).
      * from/to 양쪽을 OR로 검색하고, 날짜 범위 필터를 선택적으로 적용.

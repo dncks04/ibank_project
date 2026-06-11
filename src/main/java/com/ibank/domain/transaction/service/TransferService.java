@@ -34,6 +34,7 @@ public class TransferService {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final LedgerService ledgerService;
+    private final TransactionLimitService transactionLimitService;
 
     /**
      * 멱등성 키로 기존 거래를 조회해 replay 여부를 결정한다.
@@ -73,6 +74,8 @@ public class TransferService {
         if (request.fromAccountNumber().equals(request.toAccountNumber())) {
             throw new SameAccountTransferException(request.fromAccountNumber());
         }
+        // 단건 한도: DB 접근 없는 검증이므로 락 획득 전에 fail-fast
+        transactionLimitService.validateAmount(request.amount());
 
         // 요청 지문: 같은 멱등성 키가 다른 금액/계좌에 재사용되면 충돌로 거부하기 위함
         String fingerprint = IdempotencyFingerprint.of(
@@ -111,6 +114,9 @@ public class TransferService {
             throw new AccountAccessDeniedException(request.fromAccountNumber());
         }
 
+        // 1일 한도: 출금 계좌 락 보유 상태에서 검증 (동시 요청이 잔여 한도를 나눠 우회하지 못함)
+        transactionLimitService.validateDailyOutflow(fromAccount, request.amount());
+
         fromAccount.withdraw(request.amount());
         toAccount.deposit(request.amount());
 
@@ -137,6 +143,8 @@ public class TransferService {
     @Audited(action = "DEPOSIT", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse depositForUser(Long userId, DepositRequest request) {
+        transactionLimitService.validateAmount(request.amount());
+
         String fingerprint = IdempotencyFingerprint.of(
                 Transaction.TransactionType.DEPOSIT.name(),
                 request.accountNumber(),
@@ -183,6 +191,8 @@ public class TransferService {
     @Audited(action = "WITHDRAW", target = "#request.accountNumber")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse withdraw(Long userId, WithdrawRequest request) {
+        transactionLimitService.validateAmount(request.amount());
+
         String fingerprint = IdempotencyFingerprint.of(
                 Transaction.TransactionType.WITHDRAWAL.name(),
                 request.accountNumber(),
@@ -204,6 +214,9 @@ public class TransferService {
         if (existing.isPresent()) {
             return existing.get();
         }
+
+        // 1일 한도: 계좌 락 보유 상태에서 검증 (동시 요청이 잔여 한도를 나눠 우회하지 못함)
+        transactionLimitService.validateDailyOutflow(account, request.amount());
 
         account.withdraw(request.amount());
 
@@ -233,6 +246,8 @@ public class TransferService {
     )
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void deposit(String accountNumber, BigDecimal amount, String idempotencyKey) {
+        transactionLimitService.validateAmount(amount);
+
         String fingerprint = IdempotencyFingerprint.of(
                 Transaction.TransactionType.DEPOSIT.name(),
                 accountNumber,

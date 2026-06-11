@@ -7,12 +7,30 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
 
     Optional<Transaction> findByIdempotencyKey(String idempotencyKey);
+
+    /**
+     * 기간 내 특정 계좌에서 빠져나간(출금·이체의 출금 측) 거래 금액 합계. 1일 한도 검증용.
+     * fromAccount가 이 계좌인 거래만 집계하므로 TRANSFER·WITHDRAWAL이 포함되고 DEPOSIT은 제외된다.
+     * (from_account_id, created_at) 인덱스를 탄다.
+     */
+    @Query("""
+            SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t
+            WHERE t.fromAccount.id = :accountId
+              AND t.status = :status
+              AND t.createdAt >= :from AND t.createdAt < :to
+            """)
+    BigDecimal sumOutflowAmount(
+            @Param("accountId") Long accountId,
+            @Param("status") Transaction.TransactionStatus status,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
 
     /**
      * 특정 계좌가 출금 또는 입금에 관여한 거래 내역 조회 (페이징).

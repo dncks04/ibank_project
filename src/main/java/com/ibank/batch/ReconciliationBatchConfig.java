@@ -5,6 +5,7 @@ import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.ledger.dto.AccountLedgerBalance;
 import com.ibank.domain.ledger.entity.ReconciliationResult;
 import com.ibank.domain.ledger.repository.ReconciliationResultRepository;
+import com.ibank.domain.ledger.service.ReconciliationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.Job;
@@ -17,19 +18,24 @@ import org.springframework.batch.infrastructure.item.data.RepositoryItemReader;
 import org.springframework.batch.infrastructure.item.data.RepositoryItemWriter;
 import org.springframework.batch.infrastructure.item.data.builder.RepositoryItemReaderBuilder;
 import org.springframework.batch.infrastructure.item.data.builder.RepositoryItemWriterBuilder;
+import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 
 /**
- * 일일 정산(reconciliation) 배치.
+ * 일일 정산(reconciliation) 배치. 두 스텝으로 구성된다.
  *
- * 청크 지향 스텝: 계좌(reader) → 잔액 vs 원장 합계 비교(processor) → 결과 저장(writer).
- * 불변식 {@code balance == SUM(CREDIT) - SUM(DEBIT)} 위반 계좌를 찾아 reconciliation_results에 남긴다.
+ * 1. 계좌별 스텝(청크 지향): 계좌(reader) → 잔액 vs 원장 합계 비교(processor) → 결과 저장(writer).
+ *    불변식 {@code balance == SUM(CREDIT) - SUM(DEBIT)} 위반 계좌를 찾아 reconciliation_results에 남긴다.
+ * 2. 시스템 전체 스텝(tasklet): 복식부기 검증 — 모든 분개(journal)의 합이 0인지, 전 원장 시산표가 0인지.
+ *    위반 시 잡을 FAILED로 종료해 자금 보존 위반을 시끄럽게 표면화한다.
  */
 @Configuration
 @RequiredArgsConstructor
@@ -39,6 +45,7 @@ public class ReconciliationBatchConfig {
 
     private final AccountRepository accountRepository;
     private final ReconciliationResultRepository reconciliationResultRepository;
+    private final ReconciliationService reconciliationService;
 
     @Bean
     public RepositoryItemReader<Account> reconciliationReader() {
@@ -86,10 +93,31 @@ public class ReconciliationBatchConfig {
                 .build();
     }
 
+    /**
+     * 복식부기 검증 스텝. 계좌별 검사로는 잡지 못하는 자금 보존 위반
+     * (잔액과 원장이 함께 잘못된 경우)을 분개 zero-sum + 시산표로 탐지한다.
+     */
     @Bean
-    public Job reconciliationJob(JobRepository jobRepository, Step reconciliationStep) {
+    public Step ledgerIntegrityStep(JobRepository jobRepository,
+                                    PlatformTransactionManager transactionManager) {
+        return new StepBuilder("ledgerIntegrityStep", jobRepository)
+                .tasklet((contribution, chunkContext) -> {
+                    List<String> unbalanced = reconciliationService.findUnbalancedJournals();
+                    BigDecimal trialBalance = reconciliationService.trialBalance();
+                    if (!unbalanced.isEmpty() || trialBalance.signum() != 0) {
+                        throw new IllegalStateException(
+                                "복식부기 위반: 불균형 분개 %d건, 시산표 합계 %s".formatted(unbalanced.size(), trialBalance));
+                    }
+                    return RepeatStatus.FINISHED;
+                }, transactionManager)
+                .build();
+    }
+
+    @Bean
+    public Job reconciliationJob(JobRepository jobRepository, Step reconciliationStep, Step ledgerIntegrityStep) {
         return new JobBuilder("reconciliationJob", jobRepository)
                 .start(reconciliationStep)
+                .next(ledgerIntegrityStep)
                 .build();
     }
 }

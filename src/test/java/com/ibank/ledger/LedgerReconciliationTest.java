@@ -7,7 +7,9 @@ import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountService;
 import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.ledger.service.ReconciliationService;
+import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
+import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.exception.SameAccountTransferException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
@@ -37,8 +39,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 원장 정합성 검증. account.balance == SUM(CREDIT) - SUM(DEBIT) 불변식이
- * 개설/동시 이체 후에도 유지되는지 확인한다.
+ * 원장 정합성 검증.
+ *
+ * 1. 계좌별: account.balance == SUM(CREDIT) - SUM(DEBIT) 불변식이 개설/동시 이체 후에도 유지되는지.
+ * 2. 복식부기: 모든 분개(journal)의 합이 0이고 전 원장 시산표가 0인지 —
+ *    잔액과 원장이 함께 잘못되어 계좌별 검사를 통과하는 버그(돈 창조/소멸)까지 탐지하는지.
  */
 @SpringBootTest
 @Testcontainers(disabledWithoutDocker = true)
@@ -91,9 +96,51 @@ class LedgerReconciliationTest {
     void opening_recordedAndConsistent() {
         assertThat(reconciliationService.isConsistent(accAId)).isTrue();
         assertThat(reconciliationService.isConsistent(accBId)).isTrue();
-        // A: 초기 잔액 100000 → opening 항목 1건, B: 0원 개설 → 항목 없음
+        // A: 초기 잔액 100000 → 고객 leg 1건, B: 0원 개설 → 항목 없음
         assertThat(ledgerEntryRepository.countByAccountId(accAId)).isEqualTo(1);
         assertThat(ledgerEntryRepository.countByAccountId(accBId)).isEqualTo(0);
+        // 복식부기: 클리어링 상대 leg 포함 총 2건, 분개 균형 + 시산표 0
+        assertThat(ledgerEntryRepository.count()).isEqualTo(2);
+        assertThat(reconciliationService.findUnbalancedJournals()).isEmpty();
+        assertThat(reconciliationService.trialBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    @DisplayName("입금·출금이 클리어링 상대 leg와 함께 균형 분개로 기록된다")
+    void depositAndWithdrawal_recordBalancedJournals() {
+        transferService.depositForUser(userId, new DepositRequest(
+                accB, new BigDecimal("5000"), UUID.randomUUID().toString(), "입금"));
+        transferService.withdraw(userId, new WithdrawRequest(
+                accA, new BigDecimal("3000"), UUID.randomUUID().toString(), "출금"));
+
+        // 고객 leg는 계좌당 1건씩 추가, 클리어링 leg는 account_id가 없어 계좌별 집계에 포함되지 않음
+        assertThat(ledgerEntryRepository.countByAccountId(accBId)).isEqualTo(1);
+        assertThat(ledgerEntryRepository.countByAccountId(accAId)).isEqualTo(2); // opening + 출금
+        // 전체: 개설 2 + 입금 2 + 출금 2 = 6 leg
+        assertThat(ledgerEntryRepository.count()).isEqualTo(6);
+
+        assertThat(reconciliationService.findInconsistentAccounts()).isEmpty();
+        assertThat(reconciliationService.findUnbalancedJournals()).isEmpty();
+        assertThat(reconciliationService.trialBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    @DisplayName("잔액과 원장이 함께 조작돼 계좌별 검사를 통과해도 분개 zero-sum·시산표가 탐지한다")
+    void moneyCreation_passesPerAccountCheck_butCaughtByJournalChecks() {
+        // 돈 창조 시뮬레이션: 잔액 +1000과 상대 leg 없는 단일 CREDIT leg를 함께 주입
+        jdbcTemplate.update("UPDATE accounts SET balance = balance + 1000 WHERE id = ?", accAId);
+        jdbcTemplate.update("""
+                INSERT INTO ledger_entries (journal_id, account_id, direction, amount, balance_after, created_at)
+                VALUES ('EVIL-1', ?, 'CREDIT', 1000, 101000, now())
+                """, accAId);
+
+        // 계좌별 검사(잔액 == 원장 합)는 통과 — 기존 정산의 사각지대
+        assertThat(reconciliationService.isConsistent(accAId)).isTrue();
+        assertThat(reconciliationService.findInconsistentAccounts()).isEmpty();
+
+        // 복식부기 검증이 자금 보존 위반을 탐지
+        assertThat(reconciliationService.findUnbalancedJournals()).containsExactly("EVIL-1");
+        assertThat(reconciliationService.trialBalance()).isEqualByComparingTo(new BigDecimal("1000"));
     }
 
     @Test
@@ -116,6 +163,10 @@ class LedgerReconciliationTest {
         // 원장 항목 수: A = 1(opening) + n(DEBIT), B = n(CREDIT)
         assertThat(ledgerEntryRepository.countByAccountId(accAId)).isEqualTo(1 + n);
         assertThat(ledgerEntryRepository.countByAccountId(accBId)).isEqualTo(n);
+
+        // 복식부기: 동시 이체 후에도 모든 분개 균형 + 시산표 0
+        assertThat(reconciliationService.findUnbalancedJournals()).isEmpty();
+        assertThat(reconciliationService.trialBalance()).isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     @Test

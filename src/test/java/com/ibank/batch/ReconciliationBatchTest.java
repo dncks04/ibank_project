@@ -5,7 +5,10 @@ import com.ibank.domain.account.dto.AccountResponse;
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountService;
+import com.ibank.domain.ledger.entity.LedgerDirection;
+import com.ibank.domain.ledger.entity.LedgerEntry;
 import com.ibank.domain.ledger.entity.ReconciliationResult;
+import com.ibank.domain.ledger.entity.SystemAccount;
 import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.ledger.repository.ReconciliationResultRepository;
 import com.ibank.domain.transaction.repository.TransactionRepository;
@@ -99,5 +102,19 @@ class ReconciliationBatchTest {
                 .findFirst().orElseThrow();
         assertThat(goodResult.isConsistent()).isTrue();
         assertThat(goodResult.getBalance()).isEqualByComparingTo(new BigDecimal("10000"));
+    }
+
+    @Test
+    @DisplayName("정산 배치 - 불균형 분개(자금 보존 위반)가 있으면 잡이 FAILED로 종료된다")
+    void reconciliationJob_failsOnUnbalancedJournal() throws Exception {
+        // 상대 leg 없는 단일 시스템 leg = 합이 0이 아닌 분개 (코드 버그/수동 조작 시뮬레이션)
+        ledgerEntryRepository.save(LedgerEntry.system(
+                "BUG-1", null, SystemAccount.CLEARING, LedgerDirection.CREDIT, new BigDecimal("777")));
+
+        JobExecution execution = jobLauncher.run(reconciliationJob, new JobParametersBuilder()
+                .addLong("runAt", System.currentTimeMillis())
+                .toJobParameters());
+
+        assertThat(execution.getStatus()).isEqualTo(BatchStatus.FAILED);
     }
 }

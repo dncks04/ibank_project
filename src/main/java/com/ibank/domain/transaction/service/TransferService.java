@@ -4,7 +4,6 @@ import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
-import com.ibank.domain.ledger.entity.LedgerDirection;
 import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
@@ -126,9 +125,8 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
-        // 복식부기: 출금 계좌 DEBIT, 입금 계좌 CREDIT (합이 0이 되는 두 leg)
-        ledgerService.record(transaction, fromAccount, LedgerDirection.DEBIT, request.amount());
-        ledgerService.record(transaction, toAccount, LedgerDirection.CREDIT, request.amount());
+        // 복식부기: 출금 계좌 DEBIT + 입금 계좌 CREDIT (합이 0인 분개)
+        ledgerService.recordTransfer(transaction, fromAccount, toAccount, request.amount());
         return TransferResponse.from(transaction);
     }
 
@@ -173,7 +171,8 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
-        ledgerService.record(transaction, account, LedgerDirection.CREDIT, request.amount());
+        // 복식부기: 고객 CREDIT + 클리어링 DEBIT (외부 유입 자금의 상대 leg)
+        ledgerService.recordDeposit(transaction, account, request.amount());
         return TransferResponse.from(transaction);
     }
 
@@ -218,7 +217,8 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
-        ledgerService.record(transaction, account, LedgerDirection.DEBIT, request.amount());
+        // 복식부기: 고객 DEBIT + 클리어링 CREDIT (외부 유출 자금의 상대 leg)
+        ledgerService.recordWithdrawal(transaction, account, request.amount());
         return TransferResponse.from(transaction);
     }
 
@@ -258,6 +258,6 @@ public class TransferService {
         transaction.complete();
 
         transactionRepository.save(transaction);
-        ledgerService.record(transaction, account, LedgerDirection.CREDIT, amount);
+        ledgerService.recordDeposit(transaction, account, amount);
     }
 }

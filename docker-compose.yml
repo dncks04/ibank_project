@@ -21,11 +21,22 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: ibank-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   app:
     build: .
     container_name: ibank-app
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment:
       # 기본 프로파일 + DB 호스트만 컨테이너 네트워크(db)로 오버라이드.
@@ -33,6 +44,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ibank_db
       SPRING_DATASOURCE_USERNAME: ibank_user
       SPRING_DATASOURCE_PASSWORD: ibank_pass
+      # Redis: 분산 rate limit + 인증 캐시 무효화 전파
+      IBANK_REDIS_ENABLED: "true"
+      SPRING_DATA_REDIS_HOST: redis
     ports:
       - "8080:8080"
     healthcheck:

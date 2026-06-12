@@ -32,6 +32,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-batch")
     implementation("org.springframework.boot:spring-boot-starter-cache")
     implementation("com.github.ben-manes.caffeine:caffeine")
+    // Redis: 다중 인스턴스 대응 — 분산 rate limit + 인증 캐시 무효화 브로드캐스트 (ibank.redis.enabled로 온오프)
+    implementation("org.springframework.boot:spring-boot-starter-data-redis")
     runtimeOnly("org.postgresql:postgresql")
 
     // Observability: Prometheus 메트릭 + 구조화(JSON) 로깅

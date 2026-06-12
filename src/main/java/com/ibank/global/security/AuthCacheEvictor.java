@@ -2,6 +2,7 @@ package com.ibank.global.security;
 
 import com.ibank.global.config.CacheConfig;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Component;
@@ -17,12 +18,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <p>무효화는 드문 보안 이벤트(패닉 로그아웃/탈취 탐지)이므로 전체 비움(clear)으로 단순·견고하게 처리한다.
  * 대상 사용자는 확실히 evict되어 즉시 무효화가 보장된다.
+ *
+ * <p>Redis가 켜져 있으면({@code ibank.redis.enabled=true}) 무효화 신호를 브로드캐스트해
+ * 다른 인스턴스의 로컬 캐시도 함께 비운다 — {@link AuthCacheRedisConfig} 참조.
  */
 @Component
 @RequiredArgsConstructor
 public class AuthCacheEvictor {
 
     private final CacheManager cacheManager;
+    private final ObjectProvider<AuthCacheRedisConfig.AuthCacheInvalidationBroadcaster> broadcaster;
 
     public void evictAfterCommit() {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -42,5 +47,7 @@ public class AuthCacheEvictor {
         if (cache != null) {
             cache.clear();
         }
+        // 다중 인스턴스: 다른 인스턴스의 로컬 캐시도 비우도록 신호를 발행한다 (Redis 비활성 시 no-op)
+        broadcaster.ifAvailable(AuthCacheRedisConfig.AuthCacheInvalidationBroadcaster::broadcast);
     }
 }

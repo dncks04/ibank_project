@@ -18,7 +18,8 @@ import java.time.Duration;
  * 짧은 TTL로 캐싱해 핫패스에서 DB 접근을 없애고, 무효화 시 evict로 즉시성을 유지한다.
  *
  * <p>로컬 캐시(Caffeine)이므로 다중 인스턴스에서는 TTL이 교차 인스턴스 무효화 지연의 상한이 된다.
- * 전역 즉시 무효화가 필요하면 Spring Cache 구현만 Redis로 교체하면 된다(코드 변경 없음).
+ * {@code ibank.redis.enabled=true}면 무효화가 Redis pub/sub으로 전 인스턴스에 즉시 전파된다
+ * (캐시 데이터는 로컬에 유지하고 무효화 신호만 공유 — AuthCacheRedisConfig 참조).
  */
 @Configuration
 @EnableCaching

@@ -41,6 +41,8 @@ public class SecurityConfig {
                 // actuator는 분리된 관리 포트(management.server.port)에서만 서빙되며,
                 // 운영(compose)에서는 그 포트를 호스트에 공개하지 않는다(네트워크 레벨 보호).
                 .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
+                // API 문서: 운영(prod)에서는 springdoc 자체가 비활성화되어 404가 된다
+                .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .anyRequest().authenticated()
             )
             .exceptionHandling(ex -> ex

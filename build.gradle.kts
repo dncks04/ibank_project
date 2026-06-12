@@ -38,6 +38,9 @@ dependencies {
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     implementation("net.logstash.logback:logstash-logback-encoder:8.1")
 
+    // OpenAPI 문서 (springdoc 3.x = Spring Boot 4 지원 라인). 운영(prod)에서는 비활성화.
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
+
     // Flyway
     implementation("org.springframework.boot:spring-boot-flyway")
     implementation("org.flywaydb:flyway-core")

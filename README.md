@@ -34,6 +34,8 @@
 | POST | `/api/transactions/transfer` | 이체 | O |
 | GET | `/api/accounts/{no}/transactions` | 거래내역(페이징·기간필터) | O |
 
+전체 스펙은 OpenAPI로 자동 생성됩니다 — 로컬 실행 후 `http://localhost:8080/swagger-ui.html` (운영 프로파일에서는 비노출).
+
 ## 동시성 제어
 
 이체는 비관적 락(`SELECT ... FOR UPDATE`)으로 처리하며, 두 계좌를 항상 계좌번호 오름차순으로 잠가 데드락을 차단합니다. 양방향 이체 100건을 동시에 던지는 테스트로 확인했습니다. 락을 쥔 트랜잭션이 멈추면 뒤 이체가 전부 같이 멈추므로 DB에 `lock_timeout` 3초를 걸어 빨리 실패하고 재시도하는 쪽을 택했습니다.

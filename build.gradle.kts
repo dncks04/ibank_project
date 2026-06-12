@@ -34,6 +34,10 @@ dependencies {
     implementation("com.github.ben-manes.caffeine:caffeine")
     runtimeOnly("org.postgresql:postgresql")
 
+    // Observability: Prometheus 메트릭 + 구조화(JSON) 로깅
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
+    implementation("net.logstash.logback:logstash-logback-encoder:8.1")
+
     // Flyway
     implementation("org.springframework.boot:spring-boot-flyway")
     implementation("org.flywaydb:flyway-core")

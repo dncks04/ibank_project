@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  로깅 설정.
+  - 기본(개발): 사람이 읽는 콘솔 패턴 + 상관관계 ID(%X{requestId})
+  - prod 프로파일: 구조화(JSON) 로그 — 수집기(Loki/ELK 등)가 필드 단위로 검색할 수 있고,
+    MDC(requestId)가 모든 라인에 실려 감사 로그(audit_logs.request_id)와 ID로 조인된다.
+-->
+<configuration>
+    <springProfile name="!prod">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] [%X{requestId:-}] %logger{36} - %msg%n</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod">
+        <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <!-- MDC 전체(requestId 포함)가 최상위 JSON 필드로 실린다 -->
+                <customFields>{"app":"ibank"}</customFields>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+    </springProfile>
+</configuration>

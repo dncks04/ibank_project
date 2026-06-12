@@ -109,6 +109,23 @@ class AuditLogTest {
     }
 
     @Test
+    @DisplayName("감사 로그에 MDC의 상관관계 ID(requestId)가 함께 남는다")
+    void audit_recordsRequestIdFromMdc() {
+        String requestId = "test-request-id-0001";
+        org.slf4j.MDC.put(com.ibank.global.web.CorrelationIdFilter.MDC_KEY, requestId);
+        try {
+            transferService.depositForUser(ownerId,
+                    new DepositRequest(ACC, new BigDecimal("1000"), UUID.randomUUID().toString(), null));
+        } finally {
+            org.slf4j.MDC.remove(com.ibank.global.web.CorrelationIdFilter.MDC_KEY);
+        }
+
+        assertThat(auditLogRepository.findAll())
+                .anyMatch(a -> "DEPOSIT".equals(a.getAction())
+                        && requestId.equals(a.getRequestId()));
+    }
+
+    @Test
     @DisplayName("이체 감사 로그 target에는 출금→입금 계좌가 모두 남는다")
     void transfer_success_recordsBothAccountsInTarget() {
         transferService.transfer(ownerId, new TransferRequest(

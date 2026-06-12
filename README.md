@@ -65,6 +65,14 @@
 
 refresh 토큰은 SHA-256 해시만 DB에 저장하고 재발급 때마다 회전시킵니다. 이미 회전된 토큰이 다시 들어오면 탈취로 간주해 전체 세션을 무효화하되, 회전 직후 2초 유예창 안의 재제출은 정상 재시도로 보고 거부만 합니다. 회전은 행 락으로 직렬화해 동시 refresh로 토큰 패밀리가 갈라지는 것을 막았습니다. 그 외에 토큰 버전 기반 access 토큰 즉시 무효화, 로그인 IP 단위 brute-force 방어, 이메일 at-rest 암호화 + blind index를 적용했습니다.
 
+## 관측가능성 (Observability)
+
+모든 요청에 상관관계 ID(`X-Request-Id`)를 부여합니다. 클라이언트가 보낸 ID는 형식 검증 후 이어받고 없으면 발급하며, 모든 로그 라인(MDC)과 감사 로그(`audit_logs.request_id`), 응답 헤더에 같은 ID가 실립니다. 장애 문의가 들어오면 응답 헤더의 ID 하나로 그 요청의 로그와 감사 기록을 끝까지 추적할 수 있습니다.
+
+메트릭은 Micrometer로 수집해 Prometheus가 스크랩하고 Grafana로 봅니다. HTTP 지연 분포(p95/p99)와 함께 금융 행위 성공/실패, 멱등성 키 중복 적중, 호출 제한 거부 같은 비즈니스 카운터를 노출합니다. actuator는 서비스 포트와 분리된 관리 포트(8081)에서만 서빙되고, compose 환경에서 이 포트는 호스트에 공개되지 않아 내부 네트워크의 Prometheus만 접근합니다. 운영(prod) 로그는 JSON으로 구조화되어 수집기에서 `requestId` 필드로 바로 검색됩니다.
+
+`docker compose up` 후 Grafana(http://localhost:3000, admin/admin)에 처리율·지연·커넥션 풀 대시보드가 자동 프로비저닝됩니다.
+
 ## 테스트
 
 동시성은 Testcontainers로 실제 PostgreSQL을 띄워서 검증합니다.

@@ -38,7 +38,9 @@ public class SecurityConfig {
                 // 전체 세션 무효화는 인증된 본인만 (permitAll보다 먼저 매칭되어야 함)
                 .requestMatchers(HttpMethod.POST, "/api/auth/sessions/invalidate").authenticated()
                 .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/actuator/health").permitAll()
+                // actuator는 분리된 관리 포트(management.server.port)에서만 서빙되며,
+                // 운영(compose)에서는 그 포트를 호스트에 공개하지 않는다(네트워크 레벨 보호).
+                .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
                 .anyRequest().authenticated()
             )
             .exceptionHandling(ex -> ex

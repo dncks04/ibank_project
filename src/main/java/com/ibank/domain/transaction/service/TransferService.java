@@ -14,6 +14,7 @@ import com.ibank.domain.transaction.exception.IdempotencyKeyConflictException;
 import com.ibank.domain.transaction.exception.SameAccountTransferException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.global.audit.Audited;
+import com.ibank.global.metrics.IbankMetrics;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -35,6 +36,7 @@ public class TransferService {
     private final TransactionRepository transactionRepository;
     private final LedgerService ledgerService;
     private final TransactionLimitService transactionLimitService;
+    private final IbankMetrics metrics;
 
     /**
      * 멱등성 키로 기존 거래를 조회해 replay 여부를 결정한다.
@@ -48,6 +50,7 @@ public class TransferService {
         return transactionRepository.findByIdempotencyKey(idempotencyKey)
                 .map(tx -> {
                     verifyFingerprint(tx, idempotencyKey, fingerprint);
+                    metrics.countIdempotentReplay();
                     return TransferResponse.from(tx);
                 });
     }
@@ -256,6 +259,7 @@ public class TransferService {
         Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             verifyFingerprint(existing.get(), idempotencyKey, fingerprint);
+            metrics.countIdempotentReplay();
             return;
         }
 

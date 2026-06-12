@@ -1,6 +1,8 @@
 package com.ibank.global.audit;
 
+import com.ibank.global.metrics.IbankMetrics;
 import com.ibank.global.web.ClientIpResolver;
+import com.ibank.global.web.CorrelationIdFilter;
 import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -8,6 +10,7 @@ import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.context.expression.MethodBasedEvaluationContext;
 import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.Ordered;
@@ -46,6 +49,7 @@ public class AuditAspect {
 
     private final AuditService auditService;
     private final ClientIpResolver clientIpResolver;
+    private final IbankMetrics metrics;
 
     private final ExpressionParser expressionParser = new SpelExpressionParser();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
@@ -57,15 +61,18 @@ public class AuditAspect {
 
         String actor = currentActor();
         String ip = currentIp();
+        String requestId = MDC.get(CorrelationIdFilter.MDC_KEY);
 
         try {
             Object result = joinPoint.proceed();
             String target = resolveTarget(audited, joinPoint, signature.getMethod(), result);
-            auditService.record(actor, audited.action(), target, SUCCESS, null, ip);
+            auditService.record(actor, audited.action(), target, SUCCESS, null, ip, requestId);
+            metrics.countOperation(audited.action(), SUCCESS);
             return result;
         } catch (Throwable t) {
             String target = resolveTarget(audited, joinPoint, signature.getMethod(), null);
-            auditService.record(actor, audited.action(), target, FAILURE, t.getClass().getSimpleName(), ip);
+            auditService.record(actor, audited.action(), target, FAILURE, t.getClass().getSimpleName(), ip, requestId);
+            metrics.countOperation(audited.action(), FAILURE);
             throw t;
         }
     }

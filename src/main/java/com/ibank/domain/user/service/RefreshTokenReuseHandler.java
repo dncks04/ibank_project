@@ -5,8 +5,10 @@ import com.ibank.domain.user.repository.RefreshTokenRepository;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.global.audit.AuditService;
 import com.ibank.global.security.AuthCacheEvictor;
+import com.ibank.global.web.CorrelationIdFilter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +41,7 @@ public class RefreshTokenReuseHandler {
         log.warn("리프레시 토큰 재사용 탐지 — userId={}, 전체 세션 무효화(활성 토큰 {}개 폐기)",
                 user.getId(), revokedCount);
         auditService.record(user.getLoginId(), "REFRESH_TOKEN_REUSE", String.valueOf(user.getId()),
-                "FAILURE", "회전된 토큰 재사용 탐지로 전체 세션 무효화 (" + revokedCount + "개)", null);
+                "FAILURE", "회전된 토큰 재사용 탐지로 전체 세션 무효화 (" + revokedCount + "개)", null,
+                MDC.get(CorrelationIdFilter.MDC_KEY));
     }
 }

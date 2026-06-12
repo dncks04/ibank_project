@@ -1,6 +1,7 @@
 package com.ibank.global.security;
 
 import com.ibank.global.config.RateLimitProperties;
+import com.ibank.global.metrics.IbankMetrics;
 import com.ibank.global.web.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -31,6 +32,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final RateLimiter rateLimiter;
     private final RateLimitProperties props;
     private final ClientIpResolver clientIpResolver;
+    private final IbankMetrics metrics;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -45,6 +47,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String ip = clientIpResolver.resolve(request);
         RateLimiter.Probe probe = rateLimiter.tryConsume(ip);
         if (!probe.allowed()) {
+            metrics.countRateLimitRejection();
             log.warn("호출 제한 초과: ip={} {} {}", ip, request.getMethod(), request.getRequestURI());
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(probe.retryAfterSeconds()));

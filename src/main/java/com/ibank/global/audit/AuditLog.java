@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "audit_logs", indexes = {
         @Index(name = "idx_audit_logs_actor", columnList = "actor"),
-        @Index(name = "idx_audit_logs_created_at", columnList = "created_at")
+        @Index(name = "idx_audit_logs_created_at", columnList = "created_at"),
+        @Index(name = "idx_audit_logs_request_id", columnList = "request_id")
 })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -42,17 +43,22 @@ public class AuditLog {
     @Column(length = 45)
     private String ip;
 
+    @Column(length = 64)
+    private String requestId;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
     @Builder
-    public AuditLog(String actor, String action, String target, String result, String detail, String ip) {
+    public AuditLog(String actor, String action, String target, String result, String detail, String ip,
+                    String requestId) {
         this.actor = actor;
         this.action = action;
         this.target = target;
         this.result = result;
         this.detail = detail;
         this.ip = ip;
+        this.requestId = requestId;
         this.createdAt = LocalDateTime.now();
     }
 }

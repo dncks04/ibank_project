@@ -1,6 +1,8 @@
-# ibank 로컬 실행 환경: PostgreSQL + 애플리케이션
-# 사용:  docker compose up --build      (앱은 http://localhost:8080)
+# ibank 로컬 실행 환경: PostgreSQL + 애플리케이션 + 모니터링(Prometheus·Grafana)
+# 사용:  docker compose up --build      (앱 http://localhost:8080, Grafana http://localhost:3000)
 #        docker compose down            (-v 추가 시 DB 볼륨까지 삭제)
+# 앱의 관리 포트(8081, actuator/prometheus)는 호스트에 공개하지 않는다 —
+# 내부 네트워크의 Prometheus만 스크랩한다(메트릭 외부 노출 차단).
 services:
   db:
     image: postgres:16-alpine
@@ -34,11 +36,36 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      # actuator는 관리 포트(8081)로 이동 — 헬스체크도 컨테이너 내부에서 8081을 본다
+      test: ["CMD-SHELL", "curl -fs http://localhost:8081/actuator/health | grep -q UP || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 40s
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    container_name: ibank-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:12.0.1
+    container_name: ibank-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
 
 volumes:
   ibank-pgdata:

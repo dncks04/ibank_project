@@ -40,8 +40,13 @@ public class RefreshTokenReuseHandler {
         authCacheEvictor.evictAfterCommit(); // 캐시된 옛 토큰 버전 제거 → 즉시 무효화
         log.warn("리프레시 토큰 재사용 탐지 — userId={}, 전체 세션 무효화(활성 토큰 {}개 폐기)",
                 user.getId(), revokedCount);
-        auditService.record(user.getLoginId(), "REFRESH_TOKEN_REUSE", String.valueOf(user.getId()),
-                "FAILURE", "회전된 토큰 재사용 탐지로 전체 세션 무효화 (" + revokedCount + "개)", null,
-                MDC.get(CorrelationIdFilter.MDC_KEY));
+        // 감사 기록은 best-effort: 실패가 보안상 핵심인 세션 무효화를 함께 롤백시키지 않도록 분리한다.
+        try {
+            auditService.record(user.getLoginId(), "REFRESH_TOKEN_REUSE", String.valueOf(user.getId()),
+                    "FAILURE", "회전된 토큰 재사용 탐지로 전체 세션 무효화 (" + revokedCount + "개)", null,
+                    MDC.get(CorrelationIdFilter.MDC_KEY));
+        } catch (Exception e) {
+            log.error("토큰 재사용 감사 기록 실패 — userId={} (세션 무효화는 이미 수행됨)", user.getId(), e);
+        }
     }
 }

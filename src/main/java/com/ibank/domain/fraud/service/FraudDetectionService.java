@@ -54,9 +54,7 @@ public class FraudDetectionService {
         }
 
         // 2) 심야 고액: 심야 시간대의 고액 이체
-        int hour = now.getHour();
-        boolean night = hour >= props.nightStartHour() && hour < props.nightEndHour();
-        if (night && amount.compareTo(props.nightHighValueMin()) >= 0) {
+        if (isNight(now.getHour()) && amount.compareTo(props.nightHighValueMin()) >= 0) {
             triggered.add(RULE_NIGHT_HIGH_VALUE);
         }
 
@@ -68,5 +66,20 @@ public class FraudDetectionService {
         }
 
         return triggered;
+    }
+
+    /**
+     * 심야 구간 판정. 시작·종료 시(end는 미포함)로 정의하며 자정 횡단(예: 23~06시)을 지원한다.
+     * start == end는 구간이 비어 있는 것으로 보아 항상 false.
+     */
+    private boolean isNight(int hour) {
+        int start = props.nightStartHour();
+        int end = props.nightEndHour();
+        if (start == end) {
+            return false;
+        }
+        return start < end
+                ? hour >= start && hour < end   // 같은 날 구간 (예: 0~5시)
+                : hour >= start || hour < end;  // 자정 횡단 구간 (예: 23~6시)
     }
 }

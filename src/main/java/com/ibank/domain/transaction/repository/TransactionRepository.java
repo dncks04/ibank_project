@@ -32,6 +32,25 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 
+    /** 기간 내 이 계좌에서 출발한 거래 건수. 이상거래 탐지의 velocity(단시간 다회) 룰용. */
+    @Query("""
+            SELECT COUNT(t) FROM Transaction t
+            WHERE t.fromAccount.id = :accountId
+              AND t.createdAt >= :since
+            """)
+    long countOutgoingSince(@Param("accountId") Long accountId, @Param("since") LocalDateTime since);
+
+    /** 이 계좌가 상대 계좌로 과거에 이체를 완료한 적이 있는지. 신규 수취인(new payee) 룰용. */
+    @Query("""
+            SELECT COUNT(t) > 0 FROM Transaction t
+            WHERE t.fromAccount.id = :fromAccountId
+              AND t.toAccount.id = :toAccountId
+              AND t.status = :status
+            """)
+    boolean hasTransferTo(@Param("fromAccountId") Long fromAccountId,
+                          @Param("toAccountId") Long toAccountId,
+                          @Param("status") Transaction.TransactionStatus status);
+
     /**
      * 특정 계좌가 출금 또는 입금에 관여한 거래 내역 조회 (페이징).
      * from/to 양쪽을 OR로 검색하고, 날짜 범위 필터를 선택적으로 적용.

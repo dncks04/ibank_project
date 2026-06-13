@@ -4,6 +4,9 @@ import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
+import com.ibank.domain.fraud.entity.FraudAlert;
+import com.ibank.domain.fraud.repository.FraudAlertRepository;
+import com.ibank.domain.fraud.service.FraudDetectionService;
 import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
@@ -36,6 +39,8 @@ public class TransferService {
     private final TransactionRepository transactionRepository;
     private final LedgerService ledgerService;
     private final TransactionLimitService transactionLimitService;
+    private final FraudDetectionService fraudDetectionService;
+    private final FraudAlertRepository fraudAlertRepository;
     private final IbankMetrics metrics;
 
     /**
@@ -120,6 +125,14 @@ public class TransferService {
         // 1일 한도: 출금 계좌 락 보유 상태에서 검증 (동시 요청이 잔여 한도를 나눠 우회하지 못함)
         transactionLimitService.validateDailyOutflow(fromAccount, request.amount());
 
+        // 이상거래 탐지: 락 보유 상태에서 평가 (velocity 카운트가 동시 요청에 흔들리지 않음).
+        // 룰에 걸리면 자금을 옮기지 않고 보류(HELD)하며 경보를 남긴다.
+        List<String> triggeredRules = fraudDetectionService.evaluate(
+                fromAccount, toAccount, request.amount(), java.time.LocalDateTime.now());
+        if (!triggeredRules.isEmpty()) {
+            return holdSuspiciousTransfer(request, fromAccount, toAccount, fingerprint, triggeredRules);
+        }
+
         fromAccount.withdraw(request.amount());
         toAccount.deposit(request.amount());
 
@@ -137,6 +150,32 @@ public class TransferService {
         // 복식부기: 출금 계좌 DEBIT + 입금 계좌 CREDIT (합이 0인 분개)
         ledgerService.recordTransfer(transaction, fromAccount, toAccount, request.amount());
         return TransferResponse.from(transaction);
+    }
+
+    /**
+     * 이상거래로 판정된 이체를 보류한다. 자금을 옮기지 않고 거래를 HELD로 저장하며 경보를 남긴다.
+     * 원장 항목을 만들지 않으므로(잔액 불변) 정산 불변식에 영향이 없다.
+     * 멱등성 키는 HELD 거래가 소비하므로, 같은 요청을 재시도하면 보류된 결과가 그대로 반환된다.
+     */
+    private TransferResponse holdSuspiciousTransfer(TransferRequest request, Account fromAccount,
+                                                    Account toAccount, String fingerprint,
+                                                    List<String> triggeredRules) {
+        Transaction held = Transaction.builder()
+                .fromAccount(fromAccount)
+                .toAccount(toAccount)
+                .amount(request.amount())
+                .type(Transaction.TransactionType.TRANSFER)
+                .description(request.description())
+                .build()
+                .withIdempotency(request.idempotencyKey(), fingerprint);
+        held.hold();
+        transactionRepository.save(held);
+
+        fraudAlertRepository.save(FraudAlert.of(
+                fromAccount.getId(), held.getId(), triggeredRules, request.amount(),
+                "이상거래 탐지로 이체 보류: " + String.join(",", triggeredRules)));
+        metrics.countOperation("TRANSFER_HELD", "SUCCESS");
+        return TransferResponse.from(held);
     }
 
     /**

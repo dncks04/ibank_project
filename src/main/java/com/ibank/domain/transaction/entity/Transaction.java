@@ -94,11 +94,19 @@ public class Transaction {
         this.status = TransactionStatus.FAILED;
     }
 
+    /** 이상거래 탐지로 보류한다. 자금은 이동하지 않으며 검토 후 처리된다. */
+    public void hold() {
+        if (this.status != TransactionStatus.PENDING) {
+            throw new IllegalStateException("PENDING 상태인 거래만 보류할 수 있습니다.");
+        }
+        this.status = TransactionStatus.HELD;
+    }
+
     public enum TransactionType {
         DEPOSIT, WITHDRAWAL, TRANSFER
     }
 
     public enum TransactionStatus {
-        PENDING, COMPLETED, FAILED
+        PENDING, COMPLETED, FAILED, HELD
     }
 }

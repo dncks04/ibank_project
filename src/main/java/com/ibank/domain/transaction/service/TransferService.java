@@ -19,6 +19,7 @@ import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.global.audit.Audited;
 import com.ibank.global.metrics.IbankMetrics;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.retry.annotation.Backoff;
@@ -280,9 +281,15 @@ public class TransferService {
     /**
      * 입금 처리 - 낙관적 락 사용.
      * 충돌 시 @Retryable이 재시도. 동시 입금이 많지만 충돌 확률이 낮을 때 적합.
+     *
+     * <p>락이 없어 동시 요청 두 건이 멱등성 선검사를 모두 통과한 뒤 같은 키로 insert하면
+     * {@code transactions.idempotency_key} unique 제약 위반({@link DataIntegrityViolationException})이
+     * 발생할 수 있다. 이 경우 같은 트랜잭션에서 복구할 수 없으므로(제약 위반으로 트랜잭션이 오염됨)
+     * 재시도 대상에 포함한다 — 새 트랜잭션의 멱등성 선검사가 그사이 커밋된 거래를 발견해 replay로 수렴한다.
      */
     @Retryable(
-        retryFor = {ObjectOptimisticLockingFailureException.class, OptimisticLockingFailureException.class},
+        retryFor = {ObjectOptimisticLockingFailureException.class, OptimisticLockingFailureException.class,
+                DataIntegrityViolationException.class},
         maxAttempts = 5,
         backoff = @Backoff(delay = 50, multiplier = 2, maxDelay = 1000)
     )

@@ -27,6 +27,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.lang.reflect.Method;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@link Audited} 메서드를 감싸 감사 로그를 남긴다.
@@ -53,6 +54,8 @@ public class AuditAspect {
 
     private final ExpressionParser expressionParser = new SpelExpressionParser();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
+    /** 동일 상수 SpEL 표현식을 매 호출마다 재파싱하지 않도록 캐시한다. */
+    private final ConcurrentHashMap<String, Expression> expressionCache = new ConcurrentHashMap<>();
 
     @Around("@annotation(com.ibank.global.audit.Audited)")
     public Object around(ProceedingJoinPoint joinPoint) throws Throwable {
@@ -66,14 +69,27 @@ public class AuditAspect {
         try {
             Object result = joinPoint.proceed();
             String target = resolveTarget(audited, joinPoint, signature.getMethod(), result);
-            auditService.record(actor, audited.action(), target, SUCCESS, null, ip, requestId);
-            metrics.countOperation(audited.action(), SUCCESS);
+            recordSafely(actor, audited.action(), target, SUCCESS, null, ip, requestId);
             return result;
         } catch (Throwable t) {
             String target = resolveTarget(audited, joinPoint, signature.getMethod(), null);
-            auditService.record(actor, audited.action(), target, FAILURE, t.getClass().getSimpleName(), ip, requestId);
-            metrics.countOperation(audited.action(), FAILURE);
+            recordSafely(actor, audited.action(), target, FAILURE, t.getClass().getSimpleName(), ip, requestId);
             throw t;
+        }
+    }
+
+    /**
+     * 감사 기록은 best-effort다. 비즈니스 트랜잭션이 이미 커밋된 뒤(HIGHEST_PRECEDENCE) 실행되므로,
+     * 감사 저장 실패가 예외로 전파되면 이미 반영된 비즈니스 결과를 사용자에게 오류로 돌려주게 된다.
+     * 따라서 실패는 로그로만 남기고 흐름을 막지 않는다(원본 비즈니스 예외는 호출부에서 그대로 재던짐).
+     */
+    private void recordSafely(String actor, String action, String target, String result, String detail,
+                              String ip, String requestId) {
+        try {
+            auditService.record(actor, action, target, result, detail, ip, requestId);
+            metrics.countOperation(action, result);
+        } catch (Exception e) {
+            log.error("감사 기록 실패 (action={}, result={}) — 비즈니스 흐름은 유지", action, result, e);
         }
     }
 
@@ -91,7 +107,7 @@ public class AuditAspect {
             EvaluationContext context = new MethodBasedEvaluationContext(
                     joinPoint.getTarget(), method, joinPoint.getArgs(), parameterNameDiscoverer);
             context.setVariable("result", result);
-            Expression parsed = expressionParser.parseExpression(expression);
+            Expression parsed = expressionCache.computeIfAbsent(expression, expressionParser::parseExpression);
             Object value = parsed.getValue(context);
             return value != null ? truncate(value.toString()) : null;
         } catch (Exception e) {

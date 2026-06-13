@@ -15,5 +15,8 @@ package com.ibank.domain.ledger.entity;
 public enum SystemAccount {
 
     /** 외부 자금 경계(입금·출금·개설 초기 잔액)의 상대 계정. */
-    CLEARING
+    CLEARING,
+
+    /** 이자 지급의 상대 계정. 은행이 부담하는 이자 비용으로, DEBIT 잔액이 누적되는 것이 정상이다. */
+    INTEREST_EXPENSE
 }

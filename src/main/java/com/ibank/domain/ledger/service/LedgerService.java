@@ -49,6 +49,19 @@ public class LedgerService {
                 LedgerDirection.CREDIT, amount));
     }
 
+    /**
+     * 이자 지급: 고객 계좌 CREDIT + INTEREST_EXPENSE 시스템 계정 DEBIT (합 0인 분개).
+     * 입금/출금과 달리 거래(Transaction) 없이 배치가 직접 적립분을 지급하므로 transaction leg는 null이다.
+     * 반환한 journalId로 지급된 적립 항목을 표시해 멱등성을 확보한다.
+     */
+    public String recordInterestPayment(Account account, BigDecimal amount) {
+        String journalId = newJournalId();
+        ledgerEntryRepository.save(LedgerEntry.interestCredit(journalId, account, amount));
+        ledgerEntryRepository.save(LedgerEntry.system(journalId, null, SystemAccount.INTEREST_EXPENSE,
+                LedgerDirection.DEBIT, amount));
+        return journalId;
+    }
+
     /** 계좌 개설 초기 잔액: 입금과 동일하게 클리어링이 상대 leg. 0 이하이면 기록하지 않는다. */
     public void recordOpening(Account account, BigDecimal initialBalance) {
         if (initialBalance == null || initialBalance.signum() <= 0) {

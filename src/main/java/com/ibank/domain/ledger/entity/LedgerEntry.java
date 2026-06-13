@@ -99,4 +99,9 @@ public class LedgerEntry {
     public static LedgerEntry opening(String journalId, Account account, BigDecimal amount) {
         return new LedgerEntry(journalId, null, account, null, LedgerDirection.CREDIT, amount, amount);
     }
+
+    /** 이자 지급 고객 leg (거래 없음, CREDIT). 입금 반영 후 잔액을 스냅샷한다. */
+    public static LedgerEntry interestCredit(String journalId, Account account, BigDecimal amount) {
+        return new LedgerEntry(journalId, null, account, null, LedgerDirection.CREDIT, amount, account.getBalance());
+    }
 }

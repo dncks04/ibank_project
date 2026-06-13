@@ -10,9 +10,10 @@
  *   k6 run load-test/transfer-load.js
  *   k6 run -e VUS=100 -e DURATION=1m -e BASE_URL=http://localhost:8080 load-test/transfer-load.js
  *
- * 측정 (50 VU / 30s, 로컬 PostgreSQL 16):
- *   이체 2,639건, 실패율 0%, p95 799ms
- *   A 99,997,361 + B 2,639 = 100,000,000 (초기 총액 일치)
+ * 측정 (50 VU / 30s, 워밍업 후, Docker PostgreSQL 16):
+ *   이체 2,216건, 실패율 0%, p95 1.03s, 약 72 TPS
+ *   A 99,997,784 + B 2,216 = 100,000,000 (초기 총액 일치)
+ *   처리량은 PostgreSQL I/O에 좌우되며 네이티브 PG에서는 더 높게 측정된다.
  */
 import http from 'k6/http';
 import { check, fail } from 'k6';

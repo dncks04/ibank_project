@@ -60,7 +60,11 @@ public class FraudAlert {
         return new FraudAlert(accountId, transactionId, String.join(",", rules), amount, detail);
     }
 
+    /** 검토 완료 처리. 이미 처리된(RESOLVED) 경보는 다시 처리할 수 없다(중복 검토 방지). */
     public void resolve() {
+        if (this.status != Status.OPEN) {
+            throw new IllegalStateException("OPEN 상태인 경보만 처리할 수 있습니다.");
+        }
         this.status = Status.RESOLVED;
     }
 

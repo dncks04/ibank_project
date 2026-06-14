@@ -43,6 +43,8 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
                 // API 문서: 운영(prod)에서는 springdoc 자체가 비활성화되어 404가 된다
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                // 운영자 전용 API(이상거래 검토 등)는 ADMIN 권한 필요
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )
             .exceptionHandling(ex -> ex

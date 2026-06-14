@@ -102,11 +102,27 @@ public class Transaction {
         this.status = TransactionStatus.HELD;
     }
 
+    /** 검토 승인: 보류 거래를 완료로 전환한다. 자금 이동은 호출자(검토 서비스)가 책임진다. */
+    public void release() {
+        if (this.status != TransactionStatus.HELD) {
+            throw new IllegalStateException("HELD 상태인 거래만 해제할 수 있습니다.");
+        }
+        this.status = TransactionStatus.COMPLETED;
+    }
+
+    /** 검토 반려: 보류 거래를 취소한다. 자금은 이동하지 않는다(원장 분개 없음 → 잔액 불변). */
+    public void reject() {
+        if (this.status != TransactionStatus.HELD) {
+            throw new IllegalStateException("HELD 상태인 거래만 반려할 수 있습니다.");
+        }
+        this.status = TransactionStatus.CANCELLED;
+    }
+
     public enum TransactionType {
         DEPOSIT, WITHDRAWAL, TRANSFER
     }
 
     public enum TransactionStatus {
-        PENDING, COMPLETED, FAILED, HELD
+        PENDING, COMPLETED, FAILED, HELD, CANCELLED
     }
 }

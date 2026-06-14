@@ -2,6 +2,7 @@ package com.ibank.batch;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobLauncher;
@@ -26,6 +27,7 @@ public class RefreshTokenCleanupScheduler {
 
     /** 매일 새벽 3시 30분(기본) 정리 배치 실행. 정산 배치(2시)와 시간대를 분리한다. */
     @Scheduled(cron = "${ibank.batch.refresh-token-cleanup.cron:0 30 3 * * *}")
+    @SchedulerLock(name = "refreshTokenCleanup", lockAtMostFor = "PT10M", lockAtLeastFor = "PT30S")
     public void runDailyCleanup() throws Exception {
         jobLauncher.run(refreshTokenCleanupJob, new JobParametersBuilder()
                 .addLong("runAt", System.currentTimeMillis())

@@ -54,6 +54,10 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
     implementation("org.springframework.retry:spring-retry:2.0.12")
     implementation("org.springframework:spring-aspects")
+
+    // ShedLock: 다중 인스턴스에서 @Scheduled 배치가 동시에 중복 실행되지 않도록 분산 락 (DB 기반)
+    implementation("net.javacrumbs.shedlock:shedlock-spring:7.7.0")
+    implementation("net.javacrumbs.shedlock:shedlock-provider-jdbc-template:7.7.0")
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
     testImplementation("org.springframework.boot:spring-boot-starter-test")

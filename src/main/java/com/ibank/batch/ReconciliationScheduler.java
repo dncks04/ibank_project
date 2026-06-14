@@ -2,6 +2,7 @@ package com.ibank.batch;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobLauncher;
@@ -26,6 +27,7 @@ public class ReconciliationScheduler {
 
     /** 매일 새벽 2시(기본) 정산 배치 실행. runAt 파라미터로 매 실행을 새 JobInstance로 만든다. */
     @Scheduled(cron = "${ibank.batch.reconciliation.cron:0 0 2 * * *}")
+    @SchedulerLock(name = "reconciliation", lockAtMostFor = "PT25M", lockAtLeastFor = "PT1M")
     public void runDailyReconciliation() throws Exception {
         jobLauncher.run(reconciliationJob, new JobParametersBuilder()
                 .addLong("runAt", System.currentTimeMillis())

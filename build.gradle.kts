@@ -1,5 +1,6 @@
 plugins {
     java
+    jacoco
     id("org.springframework.boot") version "4.0.6"
     id("io.spring.dependency-management") version "1.1.7"
 }
@@ -73,4 +74,48 @@ tasks.withType<JavaCompile> {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // 테스트가 끝나면 커버리지 리포트가 항상 최신 데이터로 생성되도록 연결
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+jacoco {
+    toolVersion = "0.8.13"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)   // CI(커버리지 배지/리포트 업로드)용
+        html.required.set(true)  // 사람이 읽는 리포트
+    }
+    // 설정/엔트리포인트 등 단순 코드는 의미 있는 커버리지 대상에서 제외
+    classDirectories.setFrom(
+        files(classDirectories.files.map {
+            fileTree(it) {
+                exclude(
+                    "com/ibank/IbankProjectApplication.class",
+                    "**/dto/**",
+                    "**/config/**"
+                )
+            }
+        })
+    )
+}
+
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.jacocoTestReport)
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                minimum = "0.70".toBigDecimal()
+            }
+        }
+    }
+    classDirectories.setFrom(tasks.jacocoTestReport.get().classDirectories)
+}
+
+// `check` 시 커버리지 게이트도 함께 검증
+tasks.check {
+    dependsOn(tasks.jacocoTestCoverageVerification)
 }

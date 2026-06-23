@@ -72,7 +72,7 @@ class InterestBatchTest {
         // 서비스로 개설 → 초기 잔액이 원장에 기록됨(balance == ledgerSum 으로 시작).
         // 잔액 3,650,000원, 연 2%, 365일 → 일할 이자 = 3,650,000 * 0.02 / 365 = 200.00원
         AccountResponse opened = accountService.openAccount(user.getId(),
-                new AccountOpenRequest(new BigDecimal("3650000")));
+                new AccountOpenRequest(java.util.UUID.randomUUID().toString(), new BigDecimal("3650000")));
         account = accountRepository.findById(opened.id()).orElseThrow();
     }
 

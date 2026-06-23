@@ -34,17 +34,26 @@ public class Account {
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
+    // 개설 멱등성 키: 같은 키 재요청은 기존 계좌를 replay한다 (중복 생성 방지). UNIQUE.
+    @Column(length = 64, unique = true)
+    private String openIdempotencyKey;
+
+    // 해지 멱등성 키: 같은 키로 이미 해지된 계좌면 재요청을 성공으로 흡수한다 (중복 해지 방지).
+    @Column(length = 64)
+    private String closeIdempotencyKey;
+
     // 낙관적 락: 동시 수정 충돌 감지
     @Version
     private Long version;
 
     @Builder
-    public Account(String accountNumber, User owner, BigDecimal initialBalance) {
+    public Account(String accountNumber, User owner, BigDecimal initialBalance, String openIdempotencyKey) {
         this.accountNumber = accountNumber;
         this.owner = owner;
         this.balance = initialBalance;
         this.status = AccountStatus.ACTIVE;
         this.createdAt = LocalDateTime.now();
+        this.openIdempotencyKey = openIdempotencyKey;
     }
 
     public void deposit(BigDecimal amount) {
@@ -66,9 +75,10 @@ public class Account {
         this.balance = this.balance.subtract(amount);
     }
 
-    public void close() {
+    public void close(String idempotencyKey) {
         validateActive();
         this.status = AccountStatus.CLOSED;
+        this.closeIdempotencyKey = idempotencyKey;
     }
 
     private void validateActive() {

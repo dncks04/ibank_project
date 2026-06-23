@@ -82,9 +82,9 @@ class LedgerReconciliationTest {
         userId = user.getId();
 
         AccountResponse a = accountService.openAccount(user.getId(),
-                new AccountOpenRequest(new BigDecimal("100000")));
+                new AccountOpenRequest(java.util.UUID.randomUUID().toString(), new BigDecimal("100000")));
         AccountResponse b = accountService.openAccount(user.getId(),
-                new AccountOpenRequest(BigDecimal.ZERO));
+                new AccountOpenRequest(java.util.UUID.randomUUID().toString(), BigDecimal.ZERO));
         accA = a.accountNumber();
         accAId = a.id();
         accB = b.accountNumber();

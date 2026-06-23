@@ -84,7 +84,7 @@ class AccountControllerTest {
         mockMvc.perform(post("/api/accounts")
                         .with(user(mockUser())).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"initialBalance\": 10000}"))
+                        .content("{\"idempotencyKey\": \"open-key-1\", \"initialBalance\": 10000}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.accountNumber").value(ACC_NO))
@@ -174,9 +174,10 @@ class AccountControllerTest {
     @Test
     @DisplayName("계좌 해지 성공 - 200 반환")
     void closeAccount_success() throws Exception {
-        willDoNothing().given(accountService).closeAccount(ACC_NO, USER_ID);
+        willDoNothing().given(accountService).closeAccount(ACC_NO, USER_ID, "close-key-1");
 
         mockMvc.perform(delete("/api/accounts/{accountNumber}", ACC_NO)
+                        .param("idempotencyKey", "close-key-1")
                         .with(user(mockUser())).with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
@@ -186,9 +187,10 @@ class AccountControllerTest {
     @DisplayName("계좌 해지 - 잔액 있으면 409 반환")
     void closeAccount_nonZeroBalance() throws Exception {
         willThrow(new IllegalStateException("잔액이 남아있는 계좌는 해지할 수 없습니다. 잔액: 10000"))
-                .given(accountService).closeAccount(ACC_NO, USER_ID);
+                .given(accountService).closeAccount(ACC_NO, USER_ID, "close-key-1");
 
         mockMvc.perform(delete("/api/accounts/{accountNumber}", ACC_NO)
+                        .param("idempotencyKey", "close-key-1")
                         .with(user(mockUser())).with(csrf()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.success").value(false));
@@ -198,9 +200,10 @@ class AccountControllerTest {
     @DisplayName("계좌 해지 - 타인 계좌 접근 시 403 반환")
     void closeAccount_forbidden() throws Exception {
         willThrow(new AccountAccessDeniedException(ACC_NO))
-                .given(accountService).closeAccount(ACC_NO, USER_ID);
+                .given(accountService).closeAccount(ACC_NO, USER_ID, "close-key-1");
 
         mockMvc.perform(delete("/api/accounts/{accountNumber}", ACC_NO)
+                        .param("idempotencyKey", "close-key-1")
                         .with(user(mockUser())).with(csrf()))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.success").value(false));

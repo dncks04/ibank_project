@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -80,6 +81,14 @@ public class GlobalExceptionHandler {
         log.warn("잘못된 상태: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("요청을 처리할 수 없습니다."));
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingParam(MissingServletRequestParameterException e) {
+        // 필수 쿼리 파라미터 누락 (예: 해지 멱등성 키) — 400으로 명확히 반환
+        log.warn("필수 파라미터 누락: {}", e.getParameterName());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(e.getParameterName() + ": 필수 파라미터입니다."));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

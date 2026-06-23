@@ -68,9 +68,11 @@ class TransactionLimitTest {
                 .role(User.UserRole.ROLE_USER).build());
         userId = user.getId();
 
-        accA = accountService.openAccount(userId, new AccountOpenRequest(new BigDecimal("100000")))
+        accA = accountService.openAccount(userId, new AccountOpenRequest(
+                        java.util.UUID.randomUUID().toString(), new BigDecimal("100000")))
                 .accountNumber();
-        accB = accountService.openAccount(userId, new AccountOpenRequest(BigDecimal.ZERO))
+        accB = accountService.openAccount(userId, new AccountOpenRequest(
+                        java.util.UUID.randomUUID().toString(), BigDecimal.ZERO))
                 .accountNumber();
     }
 

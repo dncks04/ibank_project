@@ -72,7 +72,7 @@ class ReconciliationBatchTest {
 
         // 정합 계좌: 서비스로 개설 → 초기 잔액이 원장에 기록됨 (balance == ledgerSum)
         AccountResponse good = accountService.openAccount(user.getId(),
-                new AccountOpenRequest(new BigDecimal("10000")));
+                new AccountOpenRequest(java.util.UUID.randomUUID().toString(), new BigDecimal("10000")));
 
         // 불일치 계좌: 리포지토리로 직접 생성 → 잔액 5000이지만 원장 항목 없음 (balance != ledgerSum)
         Account bad = accountRepository.save(Account.builder()

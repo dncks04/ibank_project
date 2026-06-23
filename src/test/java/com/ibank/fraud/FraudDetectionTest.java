@@ -74,9 +74,11 @@ class FraudDetectionTest {
                 .loginId("fraud-user").password("x").name("FDS유저")
                 .email("fraud@test.com").role(User.UserRole.ROLE_USER).build());
         userId = user.getId();
-        fromAcc = accountService.openAccount(userId, new AccountOpenRequest(new BigDecimal("10000000")))
+        fromAcc = accountService.openAccount(userId, new AccountOpenRequest(
+                        java.util.UUID.randomUUID().toString(), new BigDecimal("10000000")))
                 .accountNumber();
-        toAcc = accountService.openAccount(userId, new AccountOpenRequest(BigDecimal.ZERO))
+        toAcc = accountService.openAccount(userId, new AccountOpenRequest(
+                        java.util.UUID.randomUUID().toString(), BigDecimal.ZERO))
                 .accountNumber();
     }
 

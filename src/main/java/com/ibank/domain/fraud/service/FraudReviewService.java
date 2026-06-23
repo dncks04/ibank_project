@@ -5,6 +5,7 @@ import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.fraud.dto.FraudAlertResponse;
 import com.ibank.domain.fraud.entity.FraudAlert;
+import com.ibank.domain.fraud.exception.FraudAlertAlreadyResolvedException;
 import com.ibank.domain.fraud.exception.FraudAlertNotFoundException;
 import com.ibank.domain.fraud.repository.FraudAlertRepository;
 import com.ibank.domain.ledger.service.LedgerService;
@@ -60,8 +61,7 @@ public class FraudReviewService {
     @Audited(action = "FRAUD_RELEASE", target = "#alertId")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse release(Long alertId) {
-        FraudAlert alert = fraudAlertRepository.findById(alertId)
-                .orElseThrow(() -> new FraudAlertNotFoundException(alertId));
+        FraudAlert alert = loadOpenAlertForReview(alertId);
         Transaction tx = loadHeldTransaction(alert);
 
         String fromNumber = tx.getFromAccount().getAccountNumber();
@@ -100,8 +100,7 @@ public class FraudReviewService {
     @Audited(action = "FRAUD_REJECT", target = "#alertId")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse reject(Long alertId) {
-        FraudAlert alert = fraudAlertRepository.findById(alertId)
-                .orElseThrow(() -> new FraudAlertNotFoundException(alertId));
+        FraudAlert alert = loadOpenAlertForReview(alertId);
         Transaction tx = loadHeldTransaction(alert);
 
         tx.reject();
@@ -109,6 +108,22 @@ public class FraudReviewService {
 
         metrics.countOperation("FRAUD_REJECT", "SUCCESS");
         return TransferResponse.from(tx);
+    }
+
+    /**
+     * 검토 대상 경보를 비관적 락으로 로드하고 OPEN 상태를 재검증한다.
+     *
+     * <p>같은 경보에 대한 동시 검토를 직렬화한다. 먼저 락을 얻은 쪽이 처리(RESOLVED)하면,
+     * 나중에 락을 얻은 쪽은 최신 상태를 다시 읽어 OPEN이 아님을 확인하고 즉시 중단한다.
+     * 덕분에 승인(자금 이동)과 반려(거래 취소)가 같은 경보에 동시에 적용되는 일이 없다.
+     */
+    private FraudAlert loadOpenAlertForReview(Long alertId) {
+        FraudAlert alert = fraudAlertRepository.findByIdForUpdate(alertId)
+                .orElseThrow(() -> new FraudAlertNotFoundException(alertId));
+        if (alert.getStatus() != FraudAlert.Status.OPEN) {
+            throw new FraudAlertAlreadyResolvedException(alertId);
+        }
+        return alert;
     }
 
     private Transaction loadHeldTransaction(FraudAlert alert) {

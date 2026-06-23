@@ -47,8 +47,10 @@ public class AccountController {
     @DeleteMapping("/{accountNumber}")
     public ResponseEntity<ApiResponse<Void>> close(
             @AuthenticationPrincipal CustomUserDetails userDetails,
-            @PathVariable String accountNumber) {
-        accountService.closeAccount(accountNumber, userDetails.getUserId());
+            @PathVariable String accountNumber,
+            // DELETE는 본문이 없으므로 멱등성 키를 쿼리 파라미터로 받는다 (같은 키 재요청은 성공 흡수)
+            @RequestParam String idempotencyKey) {
+        accountService.closeAccount(accountNumber, userDetails.getUserId(), idempotencyKey);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

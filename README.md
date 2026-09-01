@@ -6,6 +6,217 @@
 동시성 제어, 멱등성, 정합성 검증에 중점을 두었으며 그 외에도 금융권에서 중요시하는 개념들을 실제로 구현하고 싶은 생각에서 시작되었습니다.
 **여러 요청이 같은 계좌를 동시에 건드려도 잔액이 깨지지 않는가** 라는 질문이 프로젝트의 핵심이며, 실무에 가깝게 구현하려 노력했습니다.
 
+## 전체 구조
+
+요청 하나가 어떤 순서로 계층을 지나고 그 과정에서 어디가 잠기는지를 그렸습니다. 잔액을 바꾸는 경로는 결국 전부 PostgreSQL의 행 락 한 곳으로 모입니다. 배치와 Redis는 본류 바깥에 두었습니다. 둘 다 없어도 단일 인스턴스는 그대로 돌아갑니다.
+
+```mermaid
+flowchart TB
+    Client(["클라이언트"])
+
+    subgraph FILTER["필터 체인 (인증 이전)"]
+        direction TB
+        F1["상관관계 ID<br/>X-Request-Id → MDC"]
+        F2["호출 제한<br/>출발지 IP 토큰 버킷 · 429"]
+        F3["JWT 인증<br/>서명 · 토큰 버전 검증"]
+    end
+
+    CTRL["Controller<br/>/api/auth · /api/accounts<br/>/api/transactions · /api/fraud-alerts"]
+
+    subgraph SVC["도메인 서비스"]
+        direction TB
+        AUTHS["인증 · 사용자<br/>회전형 Refresh Token"]
+        ACCS["계좌<br/>개설 · 조회 · 해지"]
+        TXS["거래<br/>입금 · 출금 · 이체 · 멱등성"]
+        GUARD["거래 한도 · FDS<br/>출금 계좌 락 안에서 평가"]
+        LEDG["원장<br/>복식부기 분개 · 합계 0"]
+        INTS["이자<br/>적립분 합산 지급"]
+        RECS["정산<br/>계좌별 검증 · 시산표"]
+    end
+
+    REPO["Spring Data JPA Repository"]
+    DB[("PostgreSQL 16")]
+
+    subgraph BATCH["배치"]
+        direction TB
+        SCHED["@Scheduled + ShedLock<br/>shedlock 테이블로 노드 간 중복 실행 차단"]
+        JOBS["Spring Batch Job<br/>이자 적립/지급 · 정산 · 토큰 정리"]
+    end
+
+    subgraph CROSS["횡단 관심사"]
+        direction TB
+        AUDIT["감사 로그<br/>audit_logs · request_id"]
+        METR["Micrometer 메트릭"]
+        CACHE["인증 캐시<br/>Caffeine, TTL 30초"]
+    end
+
+    subgraph REDIS["Redis (ibank.redis.enabled, 선택)"]
+        direction TB
+        RBUCKET["분산 토큰 버킷<br/>Lua 스크립트로 원자 소비"]
+        RPUBSUB["캐시 무효화 pub/sub"]
+    end
+
+    OBS["Prometheus 스크랩 → Grafana 대시보드"]
+
+    Client --> F1 --> F2 --> F3 --> CTRL
+    CTRL --> AUTHS
+    CTRL --> ACCS
+    CTRL --> TXS
+    TXS --> GUARD
+    TXS --> LEDG
+    ACCS --> LEDG
+    INTS --> LEDG
+    AUTHS --> REPO
+    ACCS --> REPO
+    TXS --> REPO
+    LEDG --> REPO
+    RECS --> REPO
+    REPO -->|"SELECT ... FOR UPDATE · lock_timeout 3s"| DB
+
+    SCHED --> JOBS
+    JOBS --> INTS
+    JOBS --> RECS
+
+    CTRL -.-> AUDIT
+    CTRL -.-> METR
+    F3 -.-> CACHE
+    F2 -.-> RBUCKET
+    CACHE -.-> RPUBSUB
+    METR --> OBS
+
+    classDef flowNode fill:#eef3f9,stroke:#7f97b3,color:#1f2328
+    classDef svcNode fill:#eef5ee,stroke:#7ba07b,color:#1f2328
+    classDef dataNode fill:#f7f1e6,stroke:#b59a63,color:#1f2328
+    classDef auxNode fill:#f4f0f7,stroke:#9a86ac,color:#1f2328
+
+    class Client,F1,F2,F3,CTRL flowNode
+    class AUTHS,ACCS,TXS,GUARD,LEDG,INTS,RECS svcNode
+    class REPO,DB,SCHED,JOBS dataNode
+    class AUDIT,METR,CACHE,RBUCKET,RPUBSUB,OBS auxNode
+```
+
+## 데이터 모델
+
+Flyway 마이그레이션(V1~V22)에 정의된 스키마입니다. Spring Batch 메타데이터와 ShedLock 테이블은 도메인과 상관이 없어 뺐고, 컬럼도 설계 의도가 드러나는 것 위주로 추렸습니다. 눈여겨볼 곳은 `ledger_entries`입니다. 한 leg는 고객 계좌와 시스템 계정 중 정확히 한쪽에만 귀속되고, 같은 `journal_id`를 공유하는 leg들이 모여 합이 0인 분개를 이룹니다.
+
+```mermaid
+erDiagram
+    users ||--o{ accounts : "보유"
+    users ||--o{ refresh_tokens : "발급"
+    accounts |o--o{ transactions : "출금 · 입금 계좌"
+    transactions |o--o{ ledger_entries : "분개 leg"
+    accounts |o--o{ ledger_entries : "고객 leg"
+    accounts ||--o{ interest_accruals : "일일 적립"
+    accounts ||--o{ fraud_alerts : "경보"
+    transactions |o--o{ fraud_alerts : "보류된 거래"
+    accounts ||..o{ reconciliation_results : "검증 스냅샷, FK 없음"
+
+    users {
+        bigint id PK
+        varchar login_id UK
+        varchar password "BCrypt 해시"
+        varchar name
+        varchar email "AES-GCM 암호문"
+        varchar email_bidx UK "HMAC blind index"
+        varchar role
+        bigint token_version "access 토큰 즉시 무효화"
+        timestamp created_at
+    }
+
+    accounts {
+        bigint id PK
+        varchar account_number UK
+        bigint user_id FK
+        numeric balance "CHECK 음수 금지"
+        varchar status
+        bigint version "낙관적 락"
+        varchar open_idempotency_key UK "개설 멱등성"
+        varchar close_idempotency_key "해지 멱등성"
+        timestamp created_at
+    }
+
+    transactions {
+        bigint id PK
+        varchar idempotency_key UK
+        varchar request_fingerprint "타입·계좌·금액 해시"
+        bigint from_account_id FK "입금이면 NULL"
+        bigint to_account_id FK "출금이면 NULL"
+        numeric amount "CHECK 양수"
+        varchar type "DEPOSIT / WITHDRAWAL / TRANSFER"
+        varchar status "PENDING / COMPLETED / FAILED / HELD / CANCELLED"
+        varchar description
+        timestamp created_at
+    }
+
+    ledger_entries {
+        bigint id PK
+        varchar journal_id "한 분개의 leg들이 공유"
+        bigint transaction_id FK "개설·이자 leg는 NULL"
+        bigint account_id FK "고객 leg에만 존재"
+        varchar system_account "CLEARING / INTEREST_EXPENSE"
+        varchar direction "CREDIT / DEBIT"
+        numeric amount "항상 양수"
+        numeric balance_after "고객 leg 잔액 스냅샷"
+        timestamp created_at
+    }
+
+    refresh_tokens {
+        bigint id PK
+        bigint user_id FK
+        varchar token_hash UK "SHA-256"
+        timestamp expires_at
+        boolean revoked "로그아웃 폐기"
+        boolean rotated "회전 폐기, 재사용 탐지용"
+        timestamp rotated_at "유예창 판정"
+        timestamp created_at
+    }
+
+    interest_accruals {
+        bigint id PK
+        bigint account_id FK
+        date accrual_date "계좌와 묶어 UNIQUE"
+        numeric balance_snapshot
+        numeric annual_rate
+        numeric interest_amount
+        boolean paid
+        varchar payment_journal_id "지급 분개, 미지급이면 NULL"
+        timestamp created_at
+    }
+
+    fraud_alerts {
+        bigint id PK
+        bigint account_id FK
+        bigint transaction_id FK "보류된 거래"
+        varchar triggered_rules "발동 룰 목록, 쉼표 구분"
+        numeric amount
+        varchar status "OPEN / RESOLVED"
+        varchar detail
+        timestamp created_at
+    }
+
+    reconciliation_results {
+        bigint id PK
+        bigint job_execution_id
+        bigint account_id "이력 보존을 위해 FK 미설정"
+        numeric balance
+        numeric ledger_sum
+        boolean consistent
+        timestamp created_at
+    }
+
+    audit_logs {
+        bigint id PK
+        varchar actor "loginId 또는 ANONYMOUS"
+        varchar action
+        varchar target
+        varchar result "SUCCESS / FAILURE"
+        varchar detail
+        varchar ip
+        varchar request_id "MDC requestId와 동일"
+        timestamp created_at
+    }
+```
+
 # 기술 스택
 
 | 구분 |  |

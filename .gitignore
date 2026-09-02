@@ -36,3 +36,7 @@ Thumbs.db
 ### Secrets ###
 application-local.properties
 application-secret.properties
+
+### 로컬 작업물 (저장소 밖에서 관리) ###
+_workspace/
+docs/

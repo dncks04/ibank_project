@@ -1,9 +1,12 @@
 package com.ibank.concurrency;
 
+import com.ibank.domain.account.dto.AccountOpenRequest;
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.repository.AccountRepository;
+import com.ibank.domain.account.service.AccountService;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.ledger.repository.LedgerEntryRepository;
+import com.ibank.domain.ledger.service.ReconciliationService;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
@@ -43,9 +46,11 @@ class TransferConcurrencyTest {
 
     @Autowired private TransferService transferService;
     @Autowired private AccountRepository accountRepository;
+    @Autowired private AccountService accountService;
     @Autowired private UserRepository userRepository;
     @Autowired private TransactionRepository transactionRepository;
     @Autowired private LedgerEntryRepository ledgerEntryRepository;
+    @Autowired private ReconciliationService reconciliationService;
     @Autowired private PasswordEncoder passwordEncoder;
 
     private static final String ACC_A = "20260101000001";
@@ -108,43 +113,42 @@ class TransferConcurrencyTest {
     }
 
     @Test
-    @DisplayName("A→B와 B→A 동시 이체 - 데드락 없이 완료된다")
+    @DisplayName("A→B와 B→A 양방향 이체 - 데드락 없이 완료되고 정합성이 유지된다")
     void transfer_concurrent_deadlockNotOccurred() throws InterruptedException {
-        // 양방향 동시 이체: A→B 50건, B→A 50건 → 총 잔액 보존, 데드락 없음
         ledgerEntryRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
 
-        User user = userRepository.findByLoginId("concurrency-user").orElseThrow();
-        accountRepository.save(Account.builder()
-                .accountNumber(ACC_A).owner(user).initialBalance(new BigDecimal("50000")).build());
-        accountRepository.save(Account.builder()
-                .accountNumber(ACC_B).owner(user).initialBalance(new BigDecimal("50000")).build());
+        // 정식 개설 경로로 만든다. accountRepository.save()로 만들면 초기 잔액의 원장 leg가 남지 않아
+        // "잔액 == 원장 합계" 검사가 실제와 무관한 불일치를 낸다.
+        String accA = openAccount(new BigDecimal("50000"));
+        String accB = openAccount(new BigDecimal("50000"));
 
-        int pairs = 50;
+        // 동시 스레드 수를 커넥션 풀(20) 아래로 둔다. 풀을 넘기면 커넥션 획득 타임아웃이 섞여
+        // 데드락 여부가 자원 포화에 가려진다. 포화 상황의 거동은 TransferPoolSaturationInvariantTest가 본다.
+        // 스레드를 줄인 만큼 라운드를 늘려, 같은 두 계좌에 대한 행 락 경합 강도는 그대로 유지한다.
+        int threads = 16;
+        int rounds = 20;
         BigDecimal amount = new BigDecimal("100");
         CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch doneLatch = new CountDownLatch(pairs * 2);
+        CountDownLatch doneLatch = new CountDownLatch(threads);
         List<Throwable> errors = Collections.synchronizedList(new ArrayList<>());
 
-        ExecutorService executor = Executors.newFixedThreadPool(pairs * 2);
-        for (int i = 0; i < pairs; i++) {
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        for (int i = 0; i < threads; i++) {
+            // 절반은 A→B, 절반은 B→A. 두 방향이 같은 두 행을 반대 순서로 요구하므로
+            // 락을 계좌번호 순으로 잡지 않으면 여기서 데드락이 난다.
+            boolean forward = (i % 2 == 0);
             executor.submit(() -> {
                 try {
                     startLatch.await();
-                    transferService.transfer(userId, new TransferRequest(
-                            UUID.randomUUID().toString(), ACC_A, ACC_B, amount, "A→B"));
-                } catch (Throwable t) {
-                    errors.add(t);
-                } finally {
-                    doneLatch.countDown();
-                }
-            });
-            executor.submit(() -> {
-                try {
-                    startLatch.await();
-                    transferService.transfer(userId, new TransferRequest(
-                            UUID.randomUUID().toString(), ACC_B, ACC_A, amount, "B→A"));
+                    for (int r = 0; r < rounds; r++) {
+                        String from = forward ? accA : accB;
+                        String to = forward ? accB : accA;
+                        transferService.transfer(userId, new TransferRequest(
+                                UUID.randomUUID().toString(), from, to, amount,
+                                forward ? "A→B" : "B→A"));
+                    }
                 } catch (Throwable t) {
                     errors.add(t);
                 } finally {
@@ -155,17 +159,45 @@ class TransferConcurrencyTest {
 
         startLatch.countDown();
         // 데드락이 발생하면 이 대기가 타임아웃된다
-        boolean completed = doneLatch.await(60, TimeUnit.SECONDS);
+        boolean completed = doneLatch.await(120, TimeUnit.SECONDS);
         executor.shutdown();
 
-        assertThat(completed).as("60초 내 모든 이체가 완료되어야 한다 (데드락 없음)").isTrue();
-        assertThat(errors).isEmpty();
+        assertThat(completed).as("모든 이체가 제한 시간 내 완료되어야 한다 (데드락 없음)").isTrue();
 
-        Account a = accountRepository.findByAccountNumber(ACC_A).orElseThrow();
-        Account b = accountRepository.findByAccountNumber(ACC_B).orElseThrow();
-        // A→B와 B→A가 쌍으로 완료되므로 순 잔액 변화 없음
+        // 정합성 단언을 오류 검사보다 먼저 한다. 순서를 반대로 두면 오류가 하나라도 생겼을 때
+        // 여기서 멈춰, 정작 확인해야 할 잔액·원장이 검사조차 되지 않는다.
+        assertInvariantsHold(accA, accB, new BigDecimal("100000"));
+
+        // 풀 안에서 도는 경합이므로 커넥션 획득 실패가 없어야 하고, 락 타임아웃도 없어야 한다.
+        assertThat(errors).as("경합만으로는 어떤 이체도 실패하지 않아야 한다").isEmpty();
+    }
+
+    /**
+     * 잔액과 원장이 함께 성립하는지 확인한다.
+     * 계좌 층위(잔액 == CREDIT합 − DEBIT합)와 시스템 층위(분개 zero-sum, 시산표 0)를 모두 본다.
+     */
+    private void assertInvariantsHold(String accA, String accB, BigDecimal expectedTotal) {
+        Account a = accountRepository.findByAccountNumber(accA).orElseThrow();
+        Account b = accountRepository.findByAccountNumber(accB).orElseThrow();
+
         assertThat(a.getBalance().add(b.getBalance()))
-                .isEqualByComparingTo(new BigDecimal("100000"));
+                .as("총 잔액 보존 — 돈이 생기거나 사라지면 안 된다")
+                .isEqualByComparingTo(expectedTotal);
+        assertThat(a.getBalance()).as("A 잔액 음수 불가").isGreaterThanOrEqualTo(BigDecimal.ZERO);
+        assertThat(b.getBalance()).as("B 잔액 음수 불가").isGreaterThanOrEqualTo(BigDecimal.ZERO);
+
+        assertThat(reconciliationService.findInconsistentAccounts())
+                .as("계좌별 잔액 == 원장 합계").isEmpty();
+        assertThat(reconciliationService.findUnbalancedJournals())
+                .as("모든 분개의 차변/대변 합이 0").isEmpty();
+        assertThat(reconciliationService.trialBalance())
+                .as("전 원장 시산표 == 0").isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /** 초기 잔액의 원장 leg까지 남기는 정식 개설 경로. 생성된 계좌번호를 돌려준다. */
+    private String openAccount(BigDecimal initialBalance) {
+        return accountService.openAccount(userId,
+                new AccountOpenRequest(UUID.randomUUID().toString(), initialBalance)).accountNumber();
     }
 
     @Test

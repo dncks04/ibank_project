@@ -13,6 +13,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * 전역 예외 처리.
@@ -89,6 +90,17 @@ public class GlobalExceptionHandler {
         log.warn("필수 파라미터 누락: {}", e.getParameterName());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(e.getParameterName() + ": 필수 파라미터입니다."));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        // 쿼리 파라미터 타입 불일치 (예: 정렬 키 enum에 없는 값, 숫자 자리에 문자).
+        // 잘못 보낸 쪽 문제이므로 500이 아니라 400으로 돌려준다.
+        // 받은 값은 로그에만 남긴다 — 그대로 응답에 실으면 반사(reflected) 입력이 된다.
+        log.warn("파라미터 타입 불일치: {} (요구 타입: {})",
+                e.getName(), e.getRequiredType() != null ? e.getRequiredType().getSimpleName() : "-");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(e.getName() + ": 값의 형식이 올바르지 않습니다."));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

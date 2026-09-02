@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ibank.domain.transaction.search.TransactionSearchMapper">
+
+    <!--
+      record는 setter가 없어 생성자로만 채울 수 있다. resultType 자동 매핑에 맡기면 SELECT 컬럼
+      순서에 의존하게 되어, 나중에 컬럼을 중간에 끼워 넣으면 타입이 같은 경우 예외 없이 조용히
+      어긋난다. constructor 매핑으로 컬럼과 인자를 명시해 그 사고를 막는다.
+      (arg 순서는 record 컴포넌트 선언 순서와 일치해야 한다.)
+    -->
+    <resultMap id="transactionRow" type="com.ibank.domain.transaction.search.TransactionRow">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg column="type"
+                 javaType="com.ibank.domain.transaction.entity.Transaction$TransactionType"/>
+            <arg column="status"
+                 javaType="com.ibank.domain.transaction.entity.Transaction$TransactionStatus"/>
+            <arg column="amount" javaType="java.math.BigDecimal"/>
+            <arg column="counterpart_account_number" javaType="java.lang.String"/>
+            <arg column="description" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+
+    <!--
+      javaType의 _int·_long은 오타가 아니다. MyBatis 별칭에서 int·long은 래퍼 타입(Integer·Long)을
+      가리키고 primitive는 밑줄을 붙인 _int·_long이다. 래퍼로 두면 생성자를 (Integer, Long, ...)으로
+      찾아 record의 canonical 생성자 (int, long, ...)와 맞지 않아 NoSuchMethodException이 난다.
+    -->
+    <resultMap id="monthlySummaryRow" type="com.ibank.domain.transaction.search.MonthlySummaryRow">
+        <constructor>
+            <arg column="month" javaType="_int"/>
+            <arg column="count" javaType="_long"/>
+            <arg column="total_in" javaType="java.math.BigDecimal"/>
+            <arg column="total_out" javaType="java.math.BigDecimal"/>
+        </constructor>
+    </resultMap>
+
+    <!--
+      검색 조건. search와 countSearch가 같은 조건을 써야 목록과 총건수가 어긋나지 않으므로
+      한 곳에 두고 include로 공유한다.
+      모든 값은 #{}(PreparedStatement 바인딩)로만 넣는다. ${}는 인젝션 위험이라 쓰지 않는다.
+    -->
+    <sql id="searchWhere">
+        <where>
+            (t.from_account_id = #{accountId} OR t.to_account_id = #{accountId})
+            <if test="from != null">
+                AND t.created_at &gt;= #{from}
+            </if>
+            <if test="to != null">
+                AND t.created_at &lt;= #{to}
+            </if>
+            <if test="minAmount != null">
+                AND t.amount &gt;= #{minAmount}
+            </if>
+            <if test="maxAmount != null">
+                AND t.amount &lt;= #{maxAmount}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND t.description LIKE '%' || #{keyword} || '%'
+            </if>
+            <if test="types != null and !types.isEmpty()">
+                AND t.type IN
+                <foreach collection="types" item="ty" open="(" separator="," close=")">#{ty}</foreach>
+            </if>
+            <if test="statuses != null and !statuses.isEmpty()">
+                AND t.status IN
+                <foreach collection="statuses" item="st" open="(" separator="," close=")">#{st}</foreach>
+            </if>
+            <!-- 자금 방향은 배타 조건이라 choose로 하나만 걸린다. -->
+            <choose>
+                <when test="direction != null and direction.name() == 'OUT'">
+                    AND t.from_account_id = #{accountId}
+                </when>
+                <when test="direction != null and direction.name() == 'IN'">
+                    AND t.to_account_id = #{accountId}
+                </when>
+            </choose>
+        </where>
+    </sql>
+
+    <!--
+      상대 계좌번호를 자바가 아니라 SQL에서 채운다. 입금은 from이, 출금은 to가 NULL이라
+      LEFT JOIN 결과가 그대로 NULL이 되고, 이체는 내가 출금인지에 따라 반대편을 집는다.
+      TransactionHistoryResponse.resolveCounterpart()의 switch와 결과가 같다.
+    -->
+    <select id="search" resultMap="transactionRow">
+        SELECT t.id,
+               t.type,
+               t.status,
+               t.amount,
+               CASE WHEN t.from_account_id = #{accountId} THEN toa.account_number
+                    ELSE fra.account_number END AS counterpart_account_number,
+               t.description,
+               t.created_at
+        FROM transactions t
+                 LEFT JOIN accounts fra ON fra.id = t.from_account_id
+                 LEFT JOIN accounts toa ON toa.id = t.to_account_id
+        <include refid="searchWhere"/>
+        ORDER BY
+        <choose>
+            <when test="sort.name() == 'AMOUNT'">t.amount DESC</when>
+            <otherwise>t.created_at DESC</otherwise>
+        </choose>
+        , t.id DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <!-- 총건수에는 상대 계좌번호가 필요 없으므로 조인을 걸지 않는다. -->
+    <select id="countSearch" resultType="long">
+        SELECT COUNT(*)
+        FROM transactions t
+        <include refid="searchWhere"/>
+    </select>
+
+    <!--
+      월별 요약. 한 행에서 입금/출금을 CASE로 갈라 각각 합산하므로 테이블을 한 번만 훑는다.
+      거래가 없는 달은 행이 나오지 않는다.
+    -->
+    <select id="monthlySummary" resultMap="monthlySummaryRow">
+        SELECT EXTRACT(MONTH FROM t.created_at)::int                                        AS month,
+               COUNT(*)                                                                     AS count,
+               COALESCE(SUM(CASE WHEN t.to_account_id = #{accountId} THEN t.amount END), 0)  AS total_in,
+               COALESCE(SUM(CASE WHEN t.from_account_id = #{accountId} THEN t.amount END), 0) AS total_out
+        FROM transactions t
+        WHERE (t.from_account_id = #{accountId} OR t.to_account_id = #{accountId})
+          AND t.status = 'COMPLETED'
+          AND EXTRACT(YEAR FROM t.created_at) = #{year}
+        GROUP BY EXTRACT(MONTH FROM t.created_at)
+        ORDER BY month
+    </select>
+
+</mapper>

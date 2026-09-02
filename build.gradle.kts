@@ -35,6 +35,9 @@ dependencies {
     implementation("com.github.ben-manes.caffeine:caffeine")
     // Redis: 다중 인스턴스 대응 — 분산 rate limit + 인증 캐시 무효화 브로드캐스트 (ibank.redis.enabled로 온오프)
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    // MyBatis: 조회 전용. 동적 조건이 많은 거래 검색·집계 리포트만 담당하고 쓰기는 JPA가 그대로 맡는다.
+    // 4.0.x 라인이 Spring Boot 4.0을 겨냥하므로(4.1.0은 Boot 4.1 기준) 이 프로젝트에 맞춰 pin 한다.
+    implementation("org.mybatis.spring.boot:mybatis-spring-boot-starter:4.0.1")
     runtimeOnly("org.postgresql:postgresql")
 
     // Observability: Prometheus 메트릭 + 구조화(JSON) 로깅

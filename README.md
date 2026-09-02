@@ -224,6 +224,7 @@ erDiagram
 | Language | Java 21 (LTS) |
 | Framework | Spring Boot 4.0.6 (Web MVC, Data JPA, Security, Validation, Retry, Actuator, Batch) |
 | DB | PostgreSQL 16 |
+| 영속성 | JPA(쓰기·무결성) + MyBatis(동적 조회·집계 리포트) |
 | Cache / 분산 | Caffeine(로컬) + Redis(분산 호출 제한·캐시 무효화 전파, 선택) |
 | Auth | JWT(jjwt) + 회전형 Refresh Token |
 | 관측 | Micrometer · Prometheus · Grafana · 상관관계 ID(MDC) · JSON 로깅 |
@@ -247,6 +248,8 @@ erDiagram
 | POST | `/api/transactions/withdraw` | 출금 | O |
 | POST | `/api/transactions/transfer` | 이체 | O |
 | GET | `/api/accounts/{no}/transactions` | 거래내역(페이징·기간필터) | O |
+| GET | `/api/accounts/{no}/transactions/search` | 거래 상세 검색(유형·상태·금액대·방향·키워드) | O |
+| GET | `/api/accounts/{no}/transactions/summary` | 월별 거래 요약 리포트 | O |
 
 전체 스펙은 OpenAPI로 자동 생성됩니다 — 로컬 실행 후 `http://localhost:8080/swagger-ui.html` (운영 프로파일에서는 비노출).
 
@@ -287,6 +290,14 @@ erDiagram
 - **신규 수취인 고액** — 거래 이력이 없는 계좌로의 임계액 이상 이체
 
 탐지되면 이체를 즉시 거절하지 않고 **보류(HELD)** 합니다. 자금은 출금 계좌에 그대로 남고(원장 항목을 만들지 않으므로 정산 불변식에 영향 없음), 거래는 HELD로 기록되며 `fraud_alerts`에 검토용 경보가 남습니다. 멱등성 키는 보류된 거래가 소비하므로 같은 요청을 재시도해도 같은 보류 결과가 반환됩니다. 운영자는 OPEN 경보를 검토 큐로 처리합니다(해제/반려 워크플로는 후속 과제). 기본 비활성이며 `ibank.fraud.*`로 임계치를 조정합니다.
+
+## 조회와 리포트 (MyBatis)
+
+조회 중에서 조건 조합이 많은 거래 검색과 집계 리포트는 MyBatis로 구현했습니다. 무결성과 락이 필요한 쓰기는 영속성 컨텍스트를 쓰는 JPA에 그대로 두고, 조건이 유형·상태·금액대·방향·키워드로 갈라지는 조회는 SQL을 직접 쥐는 편이 낫다고 봤습니다. 하나로 통일하는 대신 도구를 강점대로 나눈 셈입니다.
+
+두 경로는 같은 DataSource를 쓰므로 트랜잭션과 커넥션을 공유합니다. 소유권 검증(JPA)과 검색(MyBatis)이 하나의 읽기 전용 트랜잭션 안에서 끝납니다. 매퍼에는 검증이 끝난 계좌 ID만 넘기고, 클라이언트가 보낸 값은 전부 `#{}` 바인딩으로만 들어갑니다. 정렬 키처럼 컬럼명이 바뀌는 자리는 문자열 대신 enum으로 닫아 두어 사용자 입력이 SQL 식별자로 흘러들 여지를 없앴습니다.
+
+상대 계좌번호는 자바 `switch`로 계산하던 것을 조인과 `CASE`로 옮겨 한 번의 조회로 채웁니다. 페이징은 Spring Data의 `Page`가 없으므로 count 쿼리와 `LIMIT/OFFSET`을 조합해 직접 만듭니다. OFFSET 방식은 뒤 페이지로 갈수록 건너뛸 앞 행을 세느라 느려지므로, 데이터가 커지면 `created_at`·`id` 기준 keyset 페이징으로 옮기는 것이 맞습니다.
 
 ## 호출 제한 (Rate limit)
 

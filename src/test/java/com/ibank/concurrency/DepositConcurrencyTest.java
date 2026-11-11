@@ -7,6 +7,7 @@ import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -40,6 +41,7 @@ class DepositConcurrencyTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired private TransferService transferService;
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
@@ -51,10 +53,7 @@ class DepositConcurrencyTest {
 
     @BeforeEach
     void setUp() {
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
 
         User user = userRepository.save(User.builder()
                 .loginId("deposit-test-user")
@@ -69,10 +68,7 @@ class DepositConcurrencyTest {
 
     @AfterEach
     void tearDown() {
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
     }
 
     @Test

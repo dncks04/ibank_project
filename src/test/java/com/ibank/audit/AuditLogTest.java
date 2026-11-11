@@ -12,6 +12,7 @@ import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.global.audit.AuditLog;
 import com.ibank.global.audit.AuditLogRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,7 @@ class AuditLogTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired TransferService transferService;
     @Autowired UserRepository userRepository;
     @Autowired AccountRepository accountRepository;
@@ -54,11 +56,7 @@ class AuditLogTest {
 
     @BeforeEach
     void setUp() {
-        auditLogRepository.deleteAll();
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
 
         User owner = userRepository.save(User.builder()
                 .loginId("audit-owner").password("x").name("계좌주")

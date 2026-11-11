@@ -6,12 +6,12 @@ import com.ibank.domain.transaction.exception.DailyLimitExceededException;
 import com.ibank.domain.transaction.exception.TransactionLimitExceededException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.global.config.TransactionLimitProperties;
+import com.ibank.global.time.BusinessClock;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 
 /**
  * 거래 한도 검증.
@@ -30,6 +30,7 @@ public class TransactionLimitService {
 
     private final TransactionLimitProperties properties;
     private final TransactionRepository transactionRepository;
+    private final BusinessClock businessClock;
 
     /** 단건(1회) 거래 한도. 이체/입금/출금 공통. */
     public void validateAmount(BigDecimal amount) {
@@ -43,12 +44,13 @@ public class TransactionLimitService {
      * 거부된 요청은 거래를 생성하지 않으므로 한도를 소모하지 않는다.
      */
     public void validateDailyOutflow(Account account, BigDecimal amount) {
-        LocalDate today = LocalDate.now();
+        // "당일"은 서버 타임존이 아니라 영업 타임존 기준이다 (컨테이너가 UTC여도 한국 자정에 한도가 초기화된다).
+        BusinessClock.DayRange today = businessClock.todayRange();
         BigDecimal used = transactionRepository.sumOutflowAmount(
                 account.getId(),
                 Transaction.TransactionStatus.COMPLETED,
-                today.atStartOfDay(),
-                today.plusDays(1).atStartOfDay());
+                today.start(),
+                today.end());
         if (used.add(amount).compareTo(properties.dailyOutflowMax()) > 0) {
             throw new DailyLimitExceededException(
                     account.getAccountNumber(), used, amount, properties.dailyOutflowMax());

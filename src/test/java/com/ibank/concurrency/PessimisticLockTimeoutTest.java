@@ -4,6 +4,7 @@ import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -44,6 +45,7 @@ class PessimisticLockTimeoutTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired private AccountRepository accountRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
@@ -53,8 +55,7 @@ class PessimisticLockTimeoutTest {
 
     @BeforeEach
     void setUp() {
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
         User user = userRepository.save(User.builder()
                 .loginId("lock-timeout-user")
                 .password(passwordEncoder.encode("pass"))
@@ -67,8 +68,7 @@ class PessimisticLockTimeoutTest {
 
     @AfterEach
     void tearDown() {
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.ibank.domain.user.exception.DuplicateEmailException;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.domain.user.service.UserService;
 import com.ibank.global.security.pii.PiiMasking;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,13 +33,14 @@ class EmailPiiTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired UserService userService;
     @Autowired UserRepository userRepository;
     @Autowired JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setUp() {
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
     }
 
     @Test

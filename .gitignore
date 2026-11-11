@@ -39,4 +39,9 @@ application-secret.properties
 
 ### 로컬 작업물 (저장소 밖에서 관리) ###
 _workspace/
-docs/
+docs/*
+# 팀 공유 문서는 추적한다 (서비스 간 계약서, 이관·적재 명세, 변경 내역)
+!docs/contracts/
+!docs/migrated-fraud-rules.md
+!docs/bulk-load-format.md
+!docs/team-project-changes.md

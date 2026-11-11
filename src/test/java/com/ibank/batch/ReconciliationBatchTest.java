@@ -14,6 +14,7 @@ import com.ibank.domain.ledger.repository.ReconciliationResultRepository;
 import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,7 @@ class ReconciliationBatchTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired JobLauncher jobLauncher;
     @Autowired Job reconciliationJob;
     @Autowired AccountService accountService;
@@ -56,11 +58,7 @@ class ReconciliationBatchTest {
 
     @BeforeEach
     void setUp() {
-        reconciliationResultRepository.deleteAll();
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
     }
 
     @Test

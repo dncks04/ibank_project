@@ -11,6 +11,7 @@ import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -44,6 +45,7 @@ class TransferConcurrencyTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired private TransferService transferService;
     @Autowired private AccountRepository accountRepository;
     @Autowired private AccountService accountService;
@@ -60,10 +62,7 @@ class TransferConcurrencyTest {
 
     @BeforeEach
     void setUp() {
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
 
         User user = userRepository.save(User.builder()
                 .loginId("concurrency-user")
@@ -82,10 +81,7 @@ class TransferConcurrencyTest {
 
     @AfterEach
     void tearDown() {
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
     }
 
     @Test
@@ -115,9 +111,7 @@ class TransferConcurrencyTest {
     @Test
     @DisplayName("A→B와 B→A 양방향 이체 - 데드락 없이 완료되고 정합성이 유지된다")
     void transfer_concurrent_deadlockNotOccurred() throws InterruptedException {
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
+        databaseCleaner.clearExceptUsers();
 
         // 정식 개설 경로로 만든다. accountRepository.save()로 만들면 초기 잔액의 원장 leg가 남지 않아
         // "잔액 == 원장 합계" 검사가 실제와 무관한 불일치를 낸다.
@@ -227,9 +221,7 @@ class TransferConcurrencyTest {
     @DisplayName("잔액 초과 동시 이체 - 잔액이 음수가 되지 않는다")
     void transfer_concurrent_overdraftNeverOccurs() throws InterruptedException {
         // A 잔액 5,000원, 스레드 10개가 각각 1,000원 이체 시도 → 5개만 성공
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
+        databaseCleaner.clearExceptUsers();
 
         User user = userRepository.findByLoginId("concurrency-user").orElseThrow();
         accountRepository.save(Account.builder()

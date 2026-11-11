@@ -10,6 +10,7 @@ import com.ibank.domain.user.repository.RefreshTokenRepository;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.domain.user.service.UserService;
 import com.ibank.global.audit.AuditLogRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,7 @@ class RefreshTokenRotationConcurrencyTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired UserService userService;
     @Autowired UserRepository userRepository;
     @Autowired RefreshTokenRepository refreshTokenRepository;
@@ -55,9 +57,7 @@ class RefreshTokenRotationConcurrencyTest {
 
     @BeforeEach
     void setUp() {
-        auditLogRepository.deleteAll();
-        refreshTokenRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
         userService.register(new RegisterRequest("rotateuser", "password123", "회전유저", "rotate@test.com"));
     }
 

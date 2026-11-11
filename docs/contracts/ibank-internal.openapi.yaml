@@ -1,0 +1,592 @@
+openapi: 3.0.3
+info:
+  title: ibank 내부 API (ibank 제공, B 서비스가 호출)
+  version: 0.1.0
+  description: |
+    계정계(ibank)가 FDS·보호 흐름 서비스(B)에 제공하는 내부 API.
+
+    ## 공통 규약
+    - 모든 `/internal/**`는 `ROLE_SYSTEM` 토큰이 필요하다(`POST /internal/auth/token`으로 발급, 이 엔드포인트만 예외).
+    - 응답은 고객 API와 같은 봉투를 쓴다: `{ "success": bool, "data": ..., "message": string|null, "code": string|null }`.
+      실패 시 `code`에 기계가 읽을 오류 코드가 들어간다. `message`는 사람용이며 바뀔 수 있으니 분기에 쓰지 않는다.
+    - 금액은 십진 문자열, 시각은 영업 타임존(기본 Asia/Seoul) 오프셋을 포함한 ISO-8601.
+    - 상태를 바꾸는 요청(POST)은 `Idempotency-Key` 헤더가 필수다.
+      - 같은 키 + 같은 요청(메서드·경로·본문) 재전송 → 처음과 같은 응답을 그대로 반환.
+      - 같은 키 + 다른 요청 → `409 IDEMPOTENCY_KEY_CONFLICT`.
+      - 성공 응답만 저장한다. 실패(4xx/5xx)는 저장하지 않으므로 같은 키로 재시도하면 다시 평가된다.
+    - 모든 호출은 감사 로그에 남는다(actor = 토큰의 클라이언트 ID).
+
+    ## 구현 단계
+    각 경로의 `x-ibank-stage`는 구현되는 작업 단계다. `planned`는 1순위 확장으로, 명세가 바뀔 수 있다.
+servers:
+  - url: http://ibank:8080
+security:
+  - systemToken: []
+tags:
+  - name: auth
+  - name: transactions
+  - name: events
+  - name: customers
+  - name: accounts
+paths:
+  /internal/auth/token:
+    post:
+      tags: [auth]
+      summary: 시스템 토큰 발급
+      x-ibank-stage: '5'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientId, clientSecret]
+              properties:
+                clientId: { type: string }
+                clientSecret: { type: string }
+      responses:
+        '200':
+          description: 발급 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    required: [accessToken, tokenType, expiresInSeconds]
+                    properties:
+                      accessToken: { type: string, description: 'RS256 JWT. 클레임 typ=system, role=ROLE_SYSTEM, sub=clientId' }
+                      tokenType: { type: string, enum: [Bearer] }
+                      expiresInSeconds: { type: integer, example: 300 }
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /.well-known/jwks.json:
+    get:
+      tags: [auth]
+      summary: 토큰 서명 공개키(JWKS)
+      x-ibank-stage: '5'
+      security: []
+      description: |
+        고객 토큰과 시스템 토큰의 서명을 B가 직접 검증할 때 쓴다. 토큰 헤더의 `kid`로 키를 고른다.
+
+        **주의**: 고객 토큰의 즉시 무효화(`token_version`)는 ibank DB 조회가 필요해 B에서는 확인할 수 없다.
+        B가 서명만 검증하면, 세션이 무효화된 고객 토큰이 만료(최대 15분)까지 B에서는 유효하다.
+      responses:
+        '200':
+          description: JWKS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty: { type: string, example: RSA }
+                        kid: { type: string }
+                        use: { type: string, example: sig }
+                        alg: { type: string, example: RS256 }
+                        n: { type: string }
+                        e: { type: string }
+
+  /internal/transactions/{id}:
+    get:
+      tags: [transactions]
+      summary: 거래·홀드 상태 조회
+      x-ibank-stage: '5'
+      parameters:
+        - $ref: '#/components/parameters/TransactionId'
+      responses:
+        '200':
+          $ref: '#/components/responses/TransactionState'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /internal/transactions/{id}/execute:
+    post:
+      tags: [transactions]
+      summary: 보류 거래 실행
+      x-ibank-stage: '5'
+      description: |
+        `HELD` 거래를 **실행 시점 기준으로 재검증**(계좌 상태 → 단건 한도 → 1일 한도 → 가용잔액)한 뒤 완료한다.
+        성공하면 홀드는 `CONSUMED`, 원장 분개가 생성되고 거래는 `COMPLETED`가 된다.
+
+        재검증에 실패하면 `422`와 사유 코드를 반환하고 **거래는 HELD로 남는다**(홀드도 ACTIVE 유지).
+        같은 거래에 실행과 취소가 동시에 오면 하나만 성공하고 다른 하나는 `409 TRANSACTION_NOT_HELD`.
+      parameters:
+        - $ref: '#/components/parameters/TransactionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolutionRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/TransactionState'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+
+  /internal/transactions/{id}/cancel:
+    post:
+      tags: [transactions]
+      summary: 보류 거래 취소
+      x-ibank-stage: '5'
+      description: |
+        `HELD` 거래를 `CANCELLED`로 바꾸고 홀드를 `RELEASED`로 해제한다. 원장 분개는 만들지 않는다.
+        가용잔액과 1일 한도 사용량이 즉시 원복된다.
+      parameters:
+        - $ref: '#/components/parameters/TransactionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolutionRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/TransactionState'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+
+  /internal/events:
+    get:
+      tags: [events]
+      summary: 거래 이벤트 조회 (Outbox)
+      x-ibank-stage: '6'
+      description: |
+        `id > after`인 이벤트를 id 오름차순으로 반환한다. B는 마지막으로 처리한 id를 저장해 두고 주기적으로 호출한다.
+
+        - **at-least-once**: 같은 이벤트가 다시 내려갈 수 있다. B는 `id`로 중복을 제거한다.
+        - **순서 보장 방식**: 이벤트의 `id`는 기록 시점이 아니라 **공개 시점**에 매긴다. ibank는 아직 진행 중인
+          트랜잭션보다 앞선(= 더 늦게 끼어들 이벤트가 없는) 이벤트에만 순서대로 id를 부여해 공개한다.
+          따라서 한 번 `id=N`까지 받았다면 그보다 작은 id의 이벤트가 나중에 새로 나타나는 일은 없다.
+        - **한계**: ibank DB에 쓰기 트랜잭션이 오래 열려 있으면 그 뒤의 이벤트 공개가 그 트랜잭션이 끝날 때까지 지연된다.
+          정상 거래 트랜잭션은 수십 ms라 평소 지연은 무시할 수준이지만, 지연이 길어질 수 있음을 전제로 설계할 것.
+          `hasMore=false`는 "지금 내려줄 수 있는 것이 없다"는 뜻이지 "발생한 이벤트가 없다"는 뜻이 아니다.
+      parameters:
+        - name: after
+          in: query
+          schema: { type: integer, format: int64, default: 0 }
+          description: 이 id보다 큰 이벤트만 반환.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, minimum: 1, maximum: 1000 }
+      responses:
+        '200':
+          description: 이벤트 목록
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    required: [events, nextAfter, hasMore]
+                    properties:
+                      events:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Event'
+                      nextAfter:
+                        type: integer
+                        format: int64
+                        description: 다음 호출의 after 값. 반환한 이벤트가 없으면 요청의 after 그대로.
+                      hasMore:
+                        type: boolean
+
+  /internal/customers/{id}/profile:
+    get:
+      tags: [customers]
+      summary: 판정용 고객 정보
+      x-ibank-stage: '6'
+      description: 판정에 필요한 최소 정보만 반환한다. 이름·이메일·생년월일 원본은 포함하지 않는다.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: 고객 정보
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/CustomerProfile'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /internal/accounts/{accountNumber}/transactions:
+    get:
+      tags: [accounts]
+      summary: 판정용 거래 이력
+      x-ibank-stage: '6'
+      parameters:
+        - $ref: '#/components/parameters/AccountNumber'
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+          description: 이 시각 이상(포함).
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+          description: 이 시각 미만(미포함).
+        - name: page
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 100, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: 거래 이력(최신순)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      content:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TransactionHistoryItem'
+                      page: { type: integer }
+                      size: { type: integer }
+                      totalElements: { type: integer, format: int64 }
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /internal/accounts/{accountNumber}/freeze:
+    post:
+      tags: [accounts]
+      summary: 계좌 지급정지
+      x-ibank-stage: planned (2-6)
+      description: FROZEN 계좌는 출금·이체 출금이 불가하고 입금은 허용된다. 지급정지 시점의 ACTIVE 홀드는 유지된다.
+      parameters:
+        - $ref: '#/components/parameters/AccountNumber'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FreezeRequest'
+      responses:
+        '200':
+          description: 지급정지됨(이미 FROZEN이면 그대로 성공)
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /internal/accounts/{accountNumber}/unfreeze:
+    post:
+      tags: [accounts]
+      summary: 계좌 지급정지 해제
+      x-ibank-stage: planned (2-6)
+      parameters:
+        - $ref: '#/components/parameters/AccountNumber'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FreezeRequest'
+      responses:
+        '200':
+          description: 해제됨(이미 ACTIVE면 그대로 성공)
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+components:
+  securitySchemes:
+    systemToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    TransactionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    AccountNumber:
+      name: accountNumber
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+      description: 호출자가 만든 고유 키(UUID 권장). 응답을 받지 못했으면 같은 키로 재시도한다.
+  responses:
+    TransactionState:
+      description: 거래 상태
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean }
+              data:
+                $ref: '#/components/schemas/TransactionState'
+    Error:
+      description: |
+        오류. `code` 값:
+
+        | HTTP | code | 의미 |
+        |---|---|---|
+        | 400 | `IDEMPOTENCY_KEY_REQUIRED` | Idempotency-Key 헤더 없음 |
+        | 400 | `INVALID_REQUEST` | 본문·파라미터 형식 오류 |
+        | 401 | `UNAUTHORIZED` | 토큰 없음·만료·서명 오류, 클라이언트 인증 실패 |
+        | 403 | `FORBIDDEN` | ROLE_SYSTEM 아님 |
+        | 404 | `TRANSACTION_NOT_FOUND` / `ACCOUNT_NOT_FOUND` / `CUSTOMER_NOT_FOUND` | 대상 없음 |
+        | 409 | `TRANSACTION_NOT_HELD` | 거래가 HELD가 아님(이미 실행·취소·만료됨) |
+        | 409 | `IDEMPOTENCY_KEY_CONFLICT` | 같은 키가 다른 요청에 이미 쓰임 |
+        | 422 | `INSUFFICIENT_AVAILABLE_BALANCE` | 실행 재검증 실패: 가용잔액 부족. 거래는 HELD 유지 |
+        | 422 | `DAILY_LIMIT_EXCEEDED` | 실행 재검증 실패: 1일 한도 초과. 거래는 HELD 유지 |
+        | 422 | `PER_TRANSACTION_LIMIT_EXCEEDED` | 실행 재검증 실패: 단건 한도 초과. 거래는 HELD 유지 |
+        | 422 | `ACCOUNT_NOT_ACTIVE` | 실행 재검증 실패: 출금·입금 계좌가 해지·정지됨. 거래는 HELD 유지 |
+        | 503 | `TEMPORARILY_UNAVAILABLE` | 락 대기 시간 초과 등. 같은 키로 재시도 가능 |
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, code]
+            properties:
+              success: { type: boolean, enum: [false] }
+              data: { nullable: true }
+              message: { type: string }
+              code: { type: string }
+  schemas:
+    Money:
+      type: string
+      pattern: '^\d+(\.\d{1,2})?$'
+      example: '1500000'
+    TransactionType:
+      type: string
+      enum: [DEPOSIT, WITHDRAWAL, TRANSFER]
+    Channel:
+      type: string
+      enum: [MOBILE, TELLER, ATM]
+    TransactionStatus:
+      type: string
+      enum: [PENDING_REVIEW, COMPLETED, HELD, CANCELLED, EXPIRED, FAILED]
+      description: |
+        - `PENDING_REVIEW`: 가승인됨(홀드 ACTIVE). 판정 대기 중.
+        - `HELD`: 판정이 HOLD. 금액이 묶인 채 실행·취소를 기다림.
+        - `COMPLETED`: 자금 이동과 분개 완료.
+        - `CANCELLED`: 취소됨. 분개 없음.
+        - `EXPIRED`: 최대 보류 시간 초과로 ibank가 해제함. 분개 없음.
+        - `FAILED`: APPROVE 판정 뒤 실행 시점 재검증에 실패. 분개 없음.
+
+        허용 전이: PENDING_REVIEW → COMPLETED / HELD / CANCELLED / FAILED, HELD → COMPLETED / CANCELLED / EXPIRED.
+    HoldStatus:
+      type: string
+      enum: [ACTIVE, CONSUMED, RELEASED, EXPIRED]
+    Decision:
+      type: object
+      nullable: true
+      description: 판정 결과. 판정 전(PENDING_REVIEW)이거나 입금이면 null.
+      properties:
+        decision: { type: string, enum: [APPROVE, HOLD] }
+        decisionId: { type: string, nullable: true, description: 'B가 발급한 값. FALLBACK이면 null' }
+        riskLevel: { type: string, nullable: true, enum: [NORMAL, CAUTION, DANGER, HIGH_RISK] }
+        reasonCodes:
+          type: array
+          items: { type: string }
+        decisionSource:
+          type: string
+          enum: [FDS, FALLBACK]
+          description: FALLBACK = FDS 호출 실패로 ibank 대체 정책이 판정함.
+    TransactionState:
+      type: object
+      required: [transactionId, type, channel, status, amount, createdAt]
+      properties:
+        transactionId: { type: integer, format: int64 }
+        type: { $ref: '#/components/schemas/TransactionType' }
+        channel: { $ref: '#/components/schemas/Channel' }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        amount: { $ref: '#/components/schemas/Money' }
+        fromAccountNumber: { type: string, nullable: true }
+        toAccountNumber: { type: string, nullable: true }
+        customerId: { type: integer, format: int64, nullable: true, description: 출금 계좌 소유 고객 }
+        hold:
+          type: object
+          nullable: true
+          properties:
+            status: { $ref: '#/components/schemas/HoldStatus' }
+            amount: { $ref: '#/components/schemas/Money' }
+            expiresAt: { type: string, format: date-time }
+        decision: { $ref: '#/components/schemas/Decision' }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+    ResolutionRequest:
+      type: object
+      properties:
+        reasonCode:
+          type: string
+          maxLength: 50
+          pattern: '^[A-Z0-9_]+$'
+          description: 실행·취소 사유(예 GUARDIAN_APPROVED, CUSTOMER_CONFIRMED_SCAM). 감사 로그와 이벤트에 실린다.
+    FreezeRequest:
+      type: object
+      required: [reasonCode]
+      properties:
+        reasonCode:
+          type: string
+          maxLength: 50
+          pattern: '^[A-Z0-9_]+$'
+    CustomerProfile:
+      type: object
+      required: [customerId, joinedAt, accounts]
+      properties:
+        customerId: { type: integer, format: int64 }
+        age:
+          type: integer
+          nullable: true
+          description: 만 나이(영업 타임존 기준 오늘). 생년월일이 없는 기존 고객은 null.
+        joinedAt: { type: string, format: date-time }
+        accounts:
+          type: array
+          items:
+            type: object
+            required: [accountNumber, accountType, status, openedAt]
+            properties:
+              accountNumber: { type: string }
+              accountType:
+                type: string
+                enum: [DEMAND, TIME_DEPOSIT]
+                description: 2-1 구현 전에는 항상 DEMAND.
+              status:
+                type: string
+                enum: [ACTIVE, FROZEN, SUSPENDED, CLOSED]
+              openedAt: { type: string, format: date-time }
+    TransactionHistoryItem:
+      type: object
+      required: [transactionId, type, channel, status, direction, amount, createdAt]
+      properties:
+        transactionId: { type: integer, format: int64 }
+        type: { $ref: '#/components/schemas/TransactionType' }
+        channel: { $ref: '#/components/schemas/Channel' }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        direction:
+          type: string
+          enum: [IN, OUT]
+          description: 조회 대상 계좌 기준 자금 방향.
+        amount: { $ref: '#/components/schemas/Money' }
+        counterpartAccountNumber: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+    Event:
+      type: object
+      required: [id, eventType, aggregateId, occurredAt, payload]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 단조 증가. 중복 제거와 다음 조회 위치에 쓴다.
+        eventType:
+          type: string
+          enum:
+            - TRANSACTION_REQUESTED
+            - TRANSACTION_COMPLETED
+            - TRANSACTION_HELD
+            - TRANSACTION_CANCELLED
+            - TRANSACTION_EXPIRED
+            - TRANSACTION_FAILED
+            - DEPOSIT
+            - ACCOUNT_OPENED
+            - ACCOUNT_CLOSED
+            - TIME_DEPOSIT_TERMINATED
+            - ACCOUNT_FROZEN
+            - ACCOUNT_UNFROZEN
+          description: |
+            `TIME_DEPOSIT_TERMINATED`, `ACCOUNT_FROZEN`, `ACCOUNT_UNFROZEN`은 1순위 확장에서 추가된다.
+            B는 모르는 eventType을 오류로 처리하지 말고 건너뛸 것(이후 종류가 늘어날 수 있다).
+        aggregateId:
+          type: string
+          description: 거래 이벤트는 거래 ID, 계좌 이벤트는 계좌번호.
+        occurredAt: { type: string, format: date-time }
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/TransactionEventPayload'
+            - $ref: '#/components/schemas/DepositEventPayload'
+            - $ref: '#/components/schemas/AccountEventPayload'
+    TransactionEventPayload:
+      type: object
+      description: TRANSACTION_* 이벤트. 이체·출금만 해당한다.
+      required: [transactionId, type, channel, status, fromAccountNumber, amount, customerId]
+      properties:
+        transactionId: { type: integer, format: int64 }
+        type: { type: string, enum: [WITHDRAWAL, TRANSFER] }
+        channel: { $ref: '#/components/schemas/Channel' }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        fromAccountNumber: { type: string }
+        toAccountNumber: { type: string, nullable: true }
+        amount: { $ref: '#/components/schemas/Money' }
+        customerId: { type: integer, format: int64 }
+        decision: { $ref: '#/components/schemas/Decision' }
+        holdExpiresAt: { type: string, format: date-time, nullable: true }
+        reasonCode:
+          type: string
+          nullable: true
+          description: 내부 API 실행·취소 요청에 실린 사유, 또는 FAILED의 재검증 실패 코드.
+    DepositEventPayload:
+      type: object
+      required: [transactionId, accountNumber, amount, customerId, channel]
+      properties:
+        transactionId: { type: integer, format: int64 }
+        accountNumber: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        customerId: { type: integer, format: int64 }
+        channel: { $ref: '#/components/schemas/Channel' }
+    AccountEventPayload:
+      type: object
+      description: ACCOUNT_OPENED / ACCOUNT_CLOSED / ACCOUNT_FROZEN / ACCOUNT_UNFROZEN
+      required: [accountNumber, customerId, accountType]
+      properties:
+        accountNumber: { type: string }
+        customerId: { type: integer, format: int64 }
+        accountType: { type: string, enum: [DEMAND, TIME_DEPOSIT] }
+        initialBalance:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          nullable: true
+          description: ACCOUNT_OPENED에만.
+        reasonCode: { type: string, nullable: true, description: 'ACCOUNT_FROZEN / UNFROZEN에만' }

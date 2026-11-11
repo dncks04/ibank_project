@@ -1,0 +1,135 @@
+openapi: 3.0.3
+info:
+  title: FDS 판정 API (B 서비스 제공, ibank가 호출)
+  version: 0.1.0
+  description: |
+    ibank(계정계)가 이체·출금 요청을 가승인(PENDING_REVIEW + 홀드)한 뒤, 실행 여부를 묻기 위해 호출한다.
+
+    ## 호출 규약
+    - ibank는 **DB 락과 커넥션을 쥐지 않은 상태**에서 호출한다.
+    - 타임아웃: 연결 300ms, 응답 300ms(둘 다 ibank 설정값). 초과 시 ibank는 대체 정책을 적용한다.
+    - 판정은 `APPROVE` / `HOLD` 두 가지뿐이다. 거절(차단)은 없다.
+      취소는 B가 보호자·고객 확인 뒤 ibank 내부 API(`POST /internal/transactions/{id}/cancel`)로 요청한다.
+    - **같은 `transactionId`로 두 번 이상 호출될 수 있다.** (ibank 프로세스가 판정 직후 죽으면 복구 배치가 재판정한다.)
+      B는 `transactionId` 기준으로 같은 판정을 돌려주거나, 최소한 재호출을 새 거래로 세지 않아야 한다.
+
+    ## ibank가 "판정 실패"로 간주하는 경우 (→ 대체 정책 적용, `decisionSource=FALLBACK`)
+    - 연결·응답 타임아웃, 연결 거부
+    - 2xx가 아닌 응답
+    - 본문 파싱 실패, `decision`이 `APPROVE`/`HOLD`가 아님
+    - 서킷 브레이커가 열린 상태(호출 자체를 생략)
+
+    ## 대체 정책 (ibank 설정값)
+    - 고객 나이가 기준(기본 65세) 이상이거나 나이를 알 수 없음 → HOLD
+    - 그 외 → APPROVE
+servers:
+  - url: http://fds:8090
+    description: 예시 (실제 주소는 ibank 설정 `ibank.fds.base-url`)
+paths:
+  /fds/evaluate:
+    post:
+      summary: 거래 실행 여부 판정
+      operationId: evaluate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvaluationRequest'
+            example:
+              transactionId: 123
+              idempotencyKey: 7f1c2c0e-2f0b-4a53-9f0e-6f8f3b1f2a11
+              type: TRANSFER
+              channel: MOBILE
+              fromAccountNumber: '20261111000123'
+              toAccountNumber: '20261101000456'
+              amount: '1500000'
+              customerId: 45
+              requestedAt: '2026-11-11T16:00:00+09:00'
+      responses:
+        '200':
+          description: 판정 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationResponse'
+              example:
+                decision: HOLD
+                riskLevel: DANGER
+                reasonCodes: [NEW_PAYEE_HIGH_VALUE, DEPOSIT_CLOSED_THEN_TRANSFER]
+                decisionId: 0b8f5d0a-8f0e-4f6e-9c56-0d2f6a9f1c77
+        default:
+          description: 2xx 외 모든 응답은 ibank에서 판정 실패로 처리되어 대체 정책이 적용된다.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        ibank → B 호출 인증. **협의 필요**(README 참고).
+        초안: ibank 설정값의 고정 토큰(`ibank.fds.api-token`)을 Bearer로 전달.
+  schemas:
+    EvaluationRequest:
+      type: object
+      required: [transactionId, idempotencyKey, type, channel, fromAccountNumber, amount, customerId, requestedAt]
+      properties:
+        transactionId:
+          type: integer
+          format: int64
+          description: ibank 거래 ID. 이후 내부 API·이벤트에서 같은 값으로 참조한다.
+        idempotencyKey:
+          type: string
+          description: 고객이 거래 요청에 붙인 멱등성 키.
+        type:
+          type: string
+          enum: [TRANSFER, WITHDRAWAL]
+        channel:
+          type: string
+          enum: [MOBILE, TELLER, ATM]
+        fromAccountNumber:
+          type: string
+          description: 출금 계좌.
+        toAccountNumber:
+          type: string
+          nullable: true
+          description: 입금 계좌. 출금(WITHDRAWAL)이면 null.
+        amount:
+          $ref: '#/components/schemas/Money'
+        customerId:
+          type: integer
+          format: int64
+          description: 출금 계좌 소유 고객의 ibank 사용자 ID.
+        requestedAt:
+          type: string
+          format: date-time
+          description: 거래 요청 시각. 영업 타임존(기본 Asia/Seoul) 오프셋을 포함한 ISO-8601.
+    EvaluationResponse:
+      type: object
+      required: [decision, decisionId]
+      properties:
+        decision:
+          type: string
+          enum: [APPROVE, HOLD]
+        riskLevel:
+          type: string
+          enum: [NORMAL, CAUTION, DANGER, HIGH_RISK]
+          description: 생략 시 ibank는 null로 저장한다.
+        reasonCodes:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 50
+            pattern: '^[A-Z0-9_]+$'
+          description: 판정 사유 코드. HOLD면 고객·창구 응답에 그대로 실린다. 생략 시 빈 배열.
+        decisionId:
+          type: string
+          maxLength: 64
+          description: B가 발급한 판정 식별자. ibank는 거래에 연결해 저장하고 이벤트에 싣는다.
+    Money:
+      type: string
+      pattern: '^\d+(\.\d{1,2})?$'
+      description: 금액. 부동소수 오차를 피하려고 십진 문자열로 주고받는다. 통화는 KRW 고정.
+      example: '1500000'

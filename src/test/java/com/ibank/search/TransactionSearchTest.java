@@ -17,6 +17,7 @@ import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.global.response.PageResponse;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -52,6 +53,7 @@ class TransactionSearchTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired private TransactionSearchService searchService;
     @Autowired private TransferService transferService;
     @Autowired private AccountRepository accountRepository;
@@ -96,10 +98,7 @@ class TransactionSearchTest {
     }
 
     private void clearAll() {
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
     }
 
     /** A 계좌에 입금 1건, 출금 1건, B로 이체 2건, B에서 받는 이체 1건을 만든다. */

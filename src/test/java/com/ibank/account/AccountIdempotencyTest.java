@@ -10,6 +10,7 @@ import com.ibank.domain.account.service.AccountService;
 import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,7 @@ class AccountIdempotencyTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired AccountService accountService;
     @Autowired AccountRepository accountRepository;
     @Autowired UserRepository userRepository;
@@ -50,9 +52,7 @@ class AccountIdempotencyTest {
 
     @BeforeEach
     void setUp() {
-        ledgerEntryRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
 
         User user = userRepository.save(User.builder()
                 .loginId("idem-user").password("x").name("멱등유저")

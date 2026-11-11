@@ -4,6 +4,7 @@ import com.ibank.domain.user.entity.RefreshToken;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.RefreshTokenRepository;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class RefreshTokenCleanupBatchTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired JobLauncher jobLauncher;
     @Autowired Job refreshTokenCleanupJob;
     @Autowired RefreshTokenRepository refreshTokenRepository;
@@ -45,8 +47,7 @@ class RefreshTokenCleanupBatchTest {
 
     @BeforeEach
     void setUp() {
-        refreshTokenRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
         user = userRepository.save(User.builder()
                 .loginId("cleanup-user").password("x").name("정리유저")
                 .email("cleanup@test.com").role(User.UserRole.ROLE_USER).build());

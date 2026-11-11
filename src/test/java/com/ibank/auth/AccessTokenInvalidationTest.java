@@ -6,6 +6,7 @@ import com.ibank.domain.user.dto.RegisterRequest;
 import com.ibank.domain.user.repository.RefreshTokenRepository;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.domain.user.service.UserService;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class AccessTokenInvalidationTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired WebApplicationContext wac;
     @Autowired UserService userService;
     @Autowired UserRepository userRepository;
@@ -45,8 +47,7 @@ class AccessTokenInvalidationTest {
 
     @BeforeEach
     void setUp() {
-        refreshTokenRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
         mockMvc = MockMvcBuilders.webAppContextSetup(wac).apply(springSecurity()).build();
         userService.register(new RegisterRequest("invuser", "password123", "무효화", "inv@test.com"));
     }

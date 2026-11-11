@@ -75,7 +75,7 @@ export function setup() {
 }
 
 function openAccount(token, initialBalance) {
-  const res = http.post(`${BASE}/api/accounts`, JSON.stringify({ initialBalance }),
+  const res = http.post(`${BASE}/api/accounts`, JSON.stringify({ idempotencyKey: uuidv4(), initialBalance }),
     { headers: jsonHeaders(token) });
   if (res.status !== 201) fail(`계좌 개설 실패: ${res.status} ${res.body}`);
   return res.json('data.accountNumber');

@@ -12,6 +12,7 @@ import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.transaction.service.TransferService;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
+import com.ibank.support.DatabaseCleaner;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -60,6 +61,7 @@ class TransferPoolSaturationInvariantTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    @Autowired private DatabaseCleaner databaseCleaner;
     @Autowired private TransferService transferService;
     @Autowired private AccountRepository accountRepository;
     @Autowired private AccountService accountService;
@@ -225,9 +227,6 @@ class TransferPoolSaturationInvariantTest {
     }
 
     private void clearAll() {
-        ledgerEntryRepository.deleteAll();
-        transactionRepository.deleteAll();
-        accountRepository.deleteAll();
-        userRepository.deleteAll();
+        databaseCleaner.clearAll();
     }
 }

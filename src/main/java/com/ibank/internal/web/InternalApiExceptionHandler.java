@@ -8,6 +8,7 @@ import com.ibank.domain.transaction.exception.TransactionLimitExceededException;
 import com.ibank.domain.transaction.exception.TransactionNotFoundException;
 import com.ibank.domain.transaction.exception.TransactionNotHeldException;
 import com.ibank.global.response.ApiResponse;
+import com.ibank.internal.customer.InternalCustomerService;
 import com.ibank.internal.idempotency.InternalIdempotencyKeyConflictException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
@@ -72,6 +73,11 @@ public class InternalApiExceptionHandler {
     @ExceptionHandler(AccountNotFoundException.class)
     public ResponseEntity<ApiResponse<Void>> accountNotFound(AccountNotFoundException e) {
         return error(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "계좌를 찾을 수 없습니다.");
+    }
+
+    @ExceptionHandler(InternalCustomerService.CustomerNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> customerNotFound(InternalCustomerService.CustomerNotFoundException e) {
+        return error(HttpStatus.NOT_FOUND, "CUSTOMER_NOT_FOUND", "고객을 찾을 수 없습니다.");
     }
 
     // ---- 409 ----

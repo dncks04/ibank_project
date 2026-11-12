@@ -254,6 +254,14 @@ paths:
       tags: [accounts]
       summary: 판정용 거래 이력
       x-ibank-stage: '6'
+      description: |
+        계좌의 거래를 요청 시각(createdAt) 최신순으로 돌려준다. 기간은 반열린 구간 `[from, to)`라서,
+        연속된 구간을 이어 조회해도 경계의 거래가 겹치거나 빠지지 않는다. 둘 다 생략하면 전체다.
+
+        - 판정 중인 거래 자신(`PENDING_REVIEW`)과 보류 중인 거래(`HELD`)도 포함된다.
+        - 고객이 적은 메모(description)는 싣지 않는다.
+        - **`from`·`to`의 `+`는 URL 인코딩(`%2B`)해야 한다.** 그대로 보내면 공백으로 해석되어 400이 된다.
+          UTC(`...Z`)로 보내면 인코딩이 필요 없다.
       parameters:
         - $ref: '#/components/parameters/AccountNumber'
         - name: from
@@ -289,6 +297,7 @@ paths:
                       page: { type: integer }
                       size: { type: integer }
                       totalElements: { type: integer, format: int64 }
+                      totalPages: { type: integer, format: int64 }
         '404':
           $ref: '#/components/responses/Error'
 

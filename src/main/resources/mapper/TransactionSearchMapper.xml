@@ -116,6 +116,60 @@
     </select>
 
     <!--
+      판정용 거래 이력. FDS 서비스가 내부 API로 가져간다.
+      기간은 반열린 구간 [from, to)다. 끝을 포함(<=)하면 연속된 두 구간을 이어 조회할 때 경계의 거래가
+      양쪽에 중복으로 나오거나, 끝을 23:59:59로 잡으면 그 1초 안의 거래가 빠진다.
+    -->
+    <resultMap id="decisionHistoryRow" type="com.ibank.domain.transaction.search.DecisionHistoryRow">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg column="type" javaType="java.lang.String"/>
+            <arg column="channel" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="direction" javaType="java.lang.String"/>
+            <arg column="amount" javaType="java.math.BigDecimal"/>
+            <arg column="counterpart_account_number" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.LocalDateTime"/>
+            <arg column="completed_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="decisionHistoryWhere">
+        WHERE (t.from_account_id = #{accountId} OR t.to_account_id = #{accountId})
+        <if test="from != null">
+            AND t.created_at &gt;= #{from}
+        </if>
+        <if test="to != null">
+            AND t.created_at &lt; #{to}
+        </if>
+    </sql>
+
+    <select id="decisionHistory" resultMap="decisionHistoryRow">
+        SELECT t.id,
+               t.type,
+               t.channel,
+               t.status,
+               CASE WHEN t.from_account_id = #{accountId} THEN 'OUT' ELSE 'IN' END AS direction,
+               t.amount,
+               CASE WHEN t.from_account_id = #{accountId} THEN toa.account_number
+                    ELSE fra.account_number END AS counterpart_account_number,
+               t.created_at,
+               t.completed_at
+        FROM transactions t
+                 LEFT JOIN accounts fra ON fra.id = t.from_account_id
+                 LEFT JOIN accounts toa ON toa.id = t.to_account_id
+        <include refid="decisionHistoryWhere"/>
+        ORDER BY t.created_at DESC, t.id DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="countDecisionHistory" resultType="long">
+        SELECT COUNT(*)
+        FROM transactions t
+        <include refid="decisionHistoryWhere"/>
+    </select>
+
+    <!--
       월별 요약. 한 행에서 입금/출금을 CASE로 갈라 각각 합산하므로 테이블을 한 번만 훑는다.
       거래가 없는 달은 행이 나오지 않는다.
     -->

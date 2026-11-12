@@ -8,6 +8,8 @@ import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.hold.repository.AccountHoldRepository;
 import com.ibank.domain.ledger.service.LedgerService;
+import com.ibank.domain.outbox.DomainEvents;
+import com.ibank.domain.outbox.EventType;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.global.audit.Audited;
@@ -36,6 +38,7 @@ public class AccountService {
     private final UserRepository userRepository;
     private final LedgerService ledgerService;
     private final AccountHoldRepository holdRepository;
+    private final DomainEvents events;
 
     @Audited(action = "ACCOUNT_OPEN", target = "#result.accountNumber")
     @Transactional
@@ -64,6 +67,7 @@ public class AccountService {
         Account saved = accountRepository.saveAndFlush(account);
         // 초기 잔액도 원장에 기록하여 잔액 == 원장 합계 불변식을 유지
         ledgerService.recordOpening(saved, request.initialBalance());
+        events.account(EventType.ACCOUNT_OPENED, saved, request.initialBalance(), null);
         // 방금 만든 계좌에는 홀드가 있을 수 없다
         return AccountResponse.from(saved, BigDecimal.ZERO);
     }
@@ -144,6 +148,7 @@ public class AccountService {
 
         // 이미 CLOSED(다른 키)면 close() 내부 validateActive()가 InactiveAccountException을 던진다.
         account.close(idempotencyKey);
+        events.account(EventType.ACCOUNT_CLOSED, account, null, null);
     }
 
     private void validateOwnership(Account account, Long userId) {

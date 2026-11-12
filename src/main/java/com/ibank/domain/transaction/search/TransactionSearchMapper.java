@@ -22,6 +22,21 @@ public interface TransactionSearchMapper {
     /** {@link #search} 와 같은 조건의 총 건수. 페이징 응답의 totalElements 계산용. */
     long countSearch(TransactionSearchCondition condition);
 
+    /**
+     * 판정용 거래 이력(최신순). FDS 서비스가 규칙·모델의 입력으로 쓴다. 기간은 반열린 구간 [from, to)이며
+     * 둘 다 null이면 전체다. 고객용 검색과 달리 채널·방향·완료 시각을 싣고 설명(description)은 싣지 않는다.
+     */
+    List<DecisionHistoryRow> decisionHistory(@Param("accountId") Long accountId,
+                                             @Param("from") java.time.LocalDateTime from,
+                                             @Param("to") java.time.LocalDateTime to,
+                                             @Param("size") int size,
+                                             @Param("offset") long offset);
+
+    /** {@link #decisionHistory}와 같은 조건의 총 건수. */
+    long countDecisionHistory(@Param("accountId") Long accountId,
+                              @Param("from") java.time.LocalDateTime from,
+                              @Param("to") java.time.LocalDateTime to);
+
     /** 한 해의 월별 입금/출금 합계와 건수. */
     List<MonthlySummaryRow> monthlySummary(@Param("accountId") Long accountId,
                                            @Param("year") int year);

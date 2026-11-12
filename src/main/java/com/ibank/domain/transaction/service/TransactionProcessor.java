@@ -14,6 +14,8 @@ import com.ibank.domain.hold.entity.AccountHold;
 import com.ibank.domain.hold.repository.AccountHoldRepository;
 import com.ibank.domain.hold.service.HoldService;
 import com.ibank.domain.ledger.service.LedgerService;
+import com.ibank.domain.outbox.DomainEvents;
+import com.ibank.domain.outbox.EventType;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
 import com.ibank.domain.transaction.dto.WithdrawRequest;
@@ -74,6 +76,7 @@ public class TransactionProcessor {
     private final IdempotencyGuard idempotencyGuard;
     private final BusinessClock businessClock;
     private final IbankMetrics metrics;
+    private final DomainEvents events;
     // 이관 전 임시: 기존 룰 기반 탐지가 켜져 있으면 보류 시 관리자 검토용 경보를 남긴다. FDS 제거 단계에서 삭제한다.
     private final FraudAlertRepository fraudAlertRepository;
     @Value("${ibank.fraud.enabled:false}")
@@ -156,7 +159,8 @@ public class TransactionProcessor {
     private Reservation reserve(Transaction tx, Account lockedFrom, String fromNumber, String toNumber) {
         tx.submitForReview();
         transactionRepository.save(tx);
-        holdService.place(lockedFrom, tx, tx.getAmount());
+        AccountHold hold = holdService.place(lockedFrom, tx, tx.getAmount());
+        events.transaction(EventType.TRANSACTION_REQUESTED, tx, hold, null);
 
         return Reservation.reserved(tx.getId(), new EvaluationRequest(
                 tx.getId(),
@@ -215,6 +219,8 @@ public class TransactionProcessor {
 
         if (decision.isHold()) {
             tx.hold();
+            events.transaction(EventType.TRANSACTION_HELD, tx,
+                    holdRepository.findByTransactionId(tx.getId()).orElse(null), null);
             recordLegacyAlert(tx, decision);
             metrics.countOperation(tx.getType().name() + "_HELD", "SUCCESS");
             return Outcome.of(TransferResponse.from(tx));
@@ -228,10 +234,12 @@ public class TransactionProcessor {
             // 가승인과 확정 사이에 계좌가 해지·정지되는 등 조건이 바뀌었다. 묶은 금액을 풀고 실패로 확정한다.
             tx.fail(failureCodeOf(e));
             holdService.release(settlement.hold());
+            events.transaction(EventType.TRANSACTION_FAILED, tx, settlement.hold(), tx.getFailureCode());
             metrics.countOperation(tx.getType().name() + "_FAILED", "FAILURE");
             return Outcome.failed(TransferResponse.from(tx), e);
         }
         settlement.execute();
+        events.transaction(EventType.TRANSACTION_COMPLETED, tx, settlement.hold(), null);
         return Outcome.of(TransferResponse.from(tx));
     }
 
@@ -258,6 +266,7 @@ public class TransactionProcessor {
         settlement.revalidate();
         settlement.execute();
         tx.recordResolutionReason(reasonCode);
+        events.transaction(EventType.TRANSACTION_COMPLETED, tx, settlement.hold(), reasonCode);
         metrics.countOperation("HELD_EXECUTE", "SUCCESS");
         return TransferResponse.from(tx);
     }
@@ -282,6 +291,7 @@ public class TransactionProcessor {
         holdService.release(hold);
         tx.cancel();
         tx.recordResolutionReason(reasonCode);
+        events.transaction(EventType.TRANSACTION_CANCELLED, tx, hold, reasonCode);
         metrics.countOperation("HELD_CANCEL", "SUCCESS");
         return TransferResponse.from(tx);
     }

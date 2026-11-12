@@ -7,6 +7,7 @@ import com.ibank.domain.account.service.AccountAccessDeniedException;
 import com.ibank.domain.decision.FraudDecisionPort.Decision;
 import com.ibank.domain.decision.FraudDecisionService;
 import com.ibank.domain.ledger.service.LedgerService;
+import com.ibank.domain.outbox.DomainEvents;
 import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
@@ -72,6 +73,7 @@ public class TransferService {
     private final FraudDecisionService fraudDecisionService;
     private final IdempotencyGuard idempotencyGuard;
     private final IbankMetrics metrics;
+    private final DomainEvents events;
 
     // ------------------------------------------------------------------
     // 이체·출금: 2단계 처리
@@ -217,6 +219,7 @@ public class TransferService {
         transactionRepository.save(transaction);
         // 복식부기: 고객 CREDIT + 클리어링 DEBIT (외부 유입 자금의 상대 leg)
         ledgerService.recordDeposit(transaction, account, request.amount());
+        events.deposit(transaction, account);
         return TransferResponse.from(transaction);
     }
 
@@ -269,5 +272,6 @@ public class TransferService {
 
         transactionRepository.save(transaction);
         ledgerService.recordDeposit(transaction, account, amount);
+        events.deposit(transaction, account);
     }
 }

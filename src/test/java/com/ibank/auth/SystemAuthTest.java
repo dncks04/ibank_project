@@ -241,7 +241,7 @@ class SystemAuthTest {
         mockMvc.perform(post("/api/transactions/transfer").header("Authorization", "Bearer " + systemToken)
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(get("/api/admin/fraud-alerts").header("Authorization", "Bearer " + systemToken))
+        mockMvc.perform(get("/api/admin/anything").header("Authorization", "Bearer " + systemToken))
                 .andExpect(status().isForbidden());
     }
 

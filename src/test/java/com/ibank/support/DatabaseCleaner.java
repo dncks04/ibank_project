@@ -27,7 +27,6 @@ public class DatabaseCleaner {
             "outbox_events",
             "internal_idempotency_keys",
             "account_holds",
-            "fraud_alerts",
             "interest_accruals",
             "reconciliation_results",
             "ledger_entries",

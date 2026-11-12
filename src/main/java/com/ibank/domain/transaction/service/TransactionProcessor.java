@@ -8,8 +8,6 @@ import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
 import com.ibank.domain.decision.FraudDecisionPort.Decision;
 import com.ibank.domain.decision.FraudDecisionPort.EvaluationRequest;
-import com.ibank.domain.fraud.entity.FraudAlert;
-import com.ibank.domain.fraud.repository.FraudAlertRepository;
 import com.ibank.domain.hold.entity.AccountHold;
 import com.ibank.domain.hold.repository.AccountHoldRepository;
 import com.ibank.domain.hold.service.HoldService;
@@ -32,7 +30,6 @@ import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.global.metrics.IbankMetrics;
 import com.ibank.global.time.BusinessClock;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,10 +74,6 @@ public class TransactionProcessor {
     private final BusinessClock businessClock;
     private final IbankMetrics metrics;
     private final DomainEvents events;
-    // 이관 전 임시: 기존 룰 기반 탐지가 켜져 있으면 보류 시 관리자 검토용 경보를 남긴다. FDS 제거 단계에서 삭제한다.
-    private final FraudAlertRepository fraudAlertRepository;
-    @Value("${ibank.fraud.enabled:false}")
-    private boolean legacyFraudAlerts;
 
     // ------------------------------------------------------------------
     // 1단계: 가승인
@@ -221,7 +214,6 @@ public class TransactionProcessor {
             tx.hold();
             events.transaction(EventType.TRANSACTION_HELD, tx,
                     holdRepository.findByTransactionId(tx.getId()).orElse(null), null);
-            recordLegacyAlert(tx, decision);
             metrics.countOperation(tx.getType().name() + "_HELD", "SUCCESS");
             return Outcome.of(TransferResponse.from(tx));
         }
@@ -423,14 +415,6 @@ public class TransactionProcessor {
             return "PER_TRANSACTION_LIMIT_EXCEEDED";
         }
         return "INSUFFICIENT_AVAILABLE_BALANCE";
-    }
-
-    private void recordLegacyAlert(Transaction tx, Decision decision) {
-        if (legacyFraudAlerts && !decision.reasonCodes().isEmpty()) {
-            fraudAlertRepository.save(FraudAlert.of(
-                    tx.getFromAccount().getId(), tx.getId(), decision.reasonCodes(), tx.getAmount(),
-                    "이상거래 탐지로 이체 보류: " + String.join(",", decision.reasonCodes())));
-        }
     }
 
     private record LockedPair(Account from, Account to) {}

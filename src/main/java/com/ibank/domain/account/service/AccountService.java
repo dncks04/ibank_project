@@ -6,19 +6,24 @@ import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.exception.AccountNotEmptyException;
 import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
+import com.ibank.domain.hold.repository.AccountHoldRepository;
 import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.global.audit.Audited;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +35,7 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
     private final LedgerService ledgerService;
+    private final AccountHoldRepository holdRepository;
 
     @Audited(action = "ACCOUNT_OPEN", target = "#result.accountNumber")
     @Transactional
@@ -58,7 +64,8 @@ public class AccountService {
         Account saved = accountRepository.saveAndFlush(account);
         // 초기 잔액도 원장에 기록하여 잔액 == 원장 합계 불변식을 유지
         ledgerService.recordOpening(saved, request.initialBalance());
-        return AccountResponse.from(saved);
+        // 방금 만든 계좌에는 홀드가 있을 수 없다
+        return AccountResponse.from(saved, BigDecimal.ZERO);
     }
 
     /**
@@ -70,23 +77,38 @@ public class AccountService {
         return accountRepository.findByOpenIdempotencyKey(idempotencyKey)
                 .map(account -> {
                     validateOwnership(account, userId);
-                    return AccountResponse.from(account);
+                    return AccountResponse.from(account, holdRepository.sumActiveAmount(account.getId()));
                 });
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * REPEATABLE_READ: 원장잔액과 홀드 합계를 두 쿼리로 읽으므로, 그 사이에 보류 거래가 실행되면
+     * (잔액 차감 + 홀드 소비) 두 값이 서로 다른 시점의 것이 되어 가용잔액이 틀리게 계산된다.
+     * PostgreSQL의 REPEATABLE_READ는 트랜잭션 전체가 한 스냅샷을 보므로 두 값이 항상 같은 시점이다.
+     */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public AccountResponse getAccount(String accountNumber, Long userId) {
         Account account = accountRepository.findByAccountNumber(accountNumber)
                 .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
         validateOwnership(account, userId);
-        return AccountResponse.from(account);
+        return AccountResponse.from(account, holdRepository.sumActiveAmount(account.getId()));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<AccountResponse> getMyAccounts(Long userId) {
-        return accountRepository.findAllByOwnerId(userId).stream()
-                .map(AccountResponse::from)
+        List<Account> accounts = accountRepository.findAllByOwnerId(userId);
+        if (accounts.isEmpty()) {
+            return List.of();
+        }
+        // 계좌마다 합계를 따로 조회하지 않고 한 번에 묶어 읽는다. 홀드가 없는 계좌는 결과에 없으므로 0으로 채운다.
+        Map<Long, BigDecimal> heldByAccount = holdRepository
+                .sumActiveAmountByAccountIds(accounts.stream().map(Account::getId).toList()).stream()
+                .collect(Collectors.toMap(AccountHoldRepository.HeldAmountByAccount::getAccountId,
+                        AccountHoldRepository.HeldAmountByAccount::getHeldAmount));
+        return accounts.stream()
+                .map(account -> AccountResponse.from(account,
+                        heldByAccount.getOrDefault(account.getId(), BigDecimal.ZERO)))
                 .toList();
     }
 

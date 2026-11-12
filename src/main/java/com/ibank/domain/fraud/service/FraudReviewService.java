@@ -8,6 +8,7 @@ import com.ibank.domain.fraud.entity.FraudAlert;
 import com.ibank.domain.fraud.exception.FraudAlertAlreadyResolvedException;
 import com.ibank.domain.fraud.exception.FraudAlertNotFoundException;
 import com.ibank.domain.fraud.repository.FraudAlertRepository;
+import com.ibank.domain.hold.service.HoldService;
 import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.transaction.dto.TransferResponse;
 import com.ibank.domain.transaction.entity.Transaction;
@@ -44,6 +45,7 @@ public class FraudReviewService {
     private final AccountRepository accountRepository;
     private final TransactionLimitService transactionLimitService;
     private final LedgerService ledgerService;
+    private final HoldService holdService;
     private final IbankMetrics metrics;
 
     /** 상태별 경보 목록(최신순). 운영자 검토 큐 조회용. */
@@ -64,8 +66,9 @@ public class FraudReviewService {
         FraudAlert alert = loadOpenAlertForReview(alertId);
         Transaction tx = loadHeldTransaction(alert);
 
-        String fromNumber = tx.getFromAccount().getAccountNumber();
-        String toNumber = tx.getToAccount().getAccountNumber();
+        // 계좌번호만 읽는다(엔티티를 락 전에 로딩하면 락 쿼리와 버전이 충돌할 수 있다). getId()는 프록시를 초기화하지 않는다.
+        String fromNumber = accountRepository.findAccountNumberById(tx.getFromAccount().getId()).orElseThrow();
+        String toNumber = accountRepository.findAccountNumberById(tx.getToAccount().getId()).orElseThrow();
         BigDecimal amount = tx.getAmount();
 
         // 데드락 방지: 항상 계좌번호 오름차순으로 락 획득 (TransferService와 동일한 전역 순서)
@@ -81,6 +84,8 @@ public class FraudReviewService {
         transactionLimitService.validateAmount(amount);
         transactionLimitService.validateDailyOutflow(fromAccount, amount);
 
+        // 가용잔액 기준: 이 거래 자체는 아직 금액을 묶지 않으므로(2단계 처리 도입 전), 다른 홀드가 묶은 금액만 제외된다
+        holdService.requireAvailable(fromAccount, amount);
         fromAccount.withdraw(amount);
         toAccount.deposit(amount);
 

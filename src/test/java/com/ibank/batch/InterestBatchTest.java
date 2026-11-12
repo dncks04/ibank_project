@@ -7,8 +7,11 @@ import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountService;
 import com.ibank.domain.interest.entity.InterestAccrual;
 import com.ibank.domain.interest.repository.InterestAccrualRepository;
+import com.ibank.domain.hold.service.HoldService;
 import com.ibank.domain.ledger.repository.LedgerEntryRepository;
 import com.ibank.domain.ledger.service.ReconciliationService;
+import com.ibank.domain.transaction.entity.Transaction;
+import com.ibank.domain.transaction.repository.TransactionRepository;
 import com.ibank.domain.user.entity.User;
 import com.ibank.domain.user.repository.UserRepository;
 import com.ibank.support.DatabaseCleaner;
@@ -24,6 +27,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -58,6 +63,9 @@ class InterestBatchTest {
     @Autowired InterestAccrualRepository interestAccrualRepository;
     @Autowired LedgerEntryRepository ledgerEntryRepository;
     @Autowired ReconciliationService reconciliationService;
+    @Autowired TransactionRepository transactionRepository;
+    @Autowired HoldService holdService;
+    @Autowired PlatformTransactionManager transactionManager;
 
     private Account account;
 
@@ -139,5 +147,25 @@ class InterestBatchTest {
         BigDecimal afterSecond = accountRepository.findById(account.getId()).orElseThrow().getBalance();
 
         assertThat(afterSecond).isEqualByComparingTo(afterFirst);
+    }
+
+    @Test
+    @DisplayName("일일 적립 - 홀드로 묶인 금액이 있어도 이자는 원장잔액 기준으로 계산된다")
+    void accrual_ignoresHolds() throws Exception {
+        // 잔액 3,650,000 중 3,000,000을 홀드로 묶는다. 가용잔액은 650,000이지만 돈은 아직 계좌에 있다.
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            Account locked = accountRepository.findByAccountNumberWithLock(account.getAccountNumber()).orElseThrow();
+            Transaction pending = transactionRepository.save(Transaction.builder()
+                    .fromAccount(locked).amount(new BigDecimal("3000000"))
+                    .type(Transaction.TransactionType.WITHDRAWAL).build());
+            holdService.place(locked, pending, new BigDecimal("3000000"));
+        });
+
+        assertThat(runAccrual(LocalDate.of(2026, 6, 1)).getStatus()).isEqualTo(BatchStatus.COMPLETED);
+
+        // 가용잔액 기준(650,000 → 35.62원)이 아니라 원장잔액 기준(3,650,000 → 200.00원)
+        InterestAccrual accrual = interestAccrualRepository.findByAccountIdAndPaidFalse(account.getId()).get(0);
+        assertThat(accrual.getBalanceSnapshot()).isEqualByComparingTo(new BigDecimal("3650000"));
+        assertThat(accrual.getInterestAmount()).isEqualByComparingTo(new BigDecimal("200.00"));
     }
 }

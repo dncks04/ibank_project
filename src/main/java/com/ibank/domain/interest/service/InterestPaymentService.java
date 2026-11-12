@@ -37,9 +37,11 @@ public class InterestPaymentService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
     public BigDecimal payAccount(Long accountId) {
-        Account account = accountRepository.findById(accountId).orElseThrow();
+        // 계좌번호만 읽는다. findById로 엔티티를 먼저 올리면, 락을 잡기 전에 이체가 잔액을 바꿨을 때
+        // 컨텍스트의 옛 버전과 락 쿼리가 읽은 새 버전이 충돌해 이 계좌의 지급이 예외로 실패한다.
+        String accountNumber = accountRepository.findAccountNumberById(accountId).orElseThrow();
         // 비관적 락: 동시 이체/출금과 잔액 갱신을 직렬화한다.
-        Account locked = accountRepository.findByAccountNumberWithLock(account.getAccountNumber())
+        Account locked = accountRepository.findByAccountNumberWithLock(accountNumber)
                 .orElseThrow();
 
         // 락 보유 상태에서 미지급분을 다시 읽는다(겹친 실행/재실행에 대한 멱등성).

@@ -70,8 +70,10 @@ class AccountControllerTest {
     }
 
     private AccountResponse sampleAccountResponse() {
+        // 원장잔액 10,000 중 3,000이 홀드로 묶여 가용잔액은 7,000
         return new AccountResponse(1L, ACC_NO, new BigDecimal("10000"),
-                Account.AccountStatus.ACTIVE, LocalDateTime.now());
+                Account.AccountStatus.ACTIVE, LocalDateTime.now(),
+                new BigDecimal("7000"), new BigDecimal("3000"));
     }
 
     // ── 계좌 개설 ──────────────────────────────────────────
@@ -119,7 +121,8 @@ class AccountControllerTest {
         given(accountService.getMyAccounts(USER_ID)).willReturn(
                 List.of(sampleAccountResponse(),
                         new AccountResponse(2L, "20260604000002", BigDecimal.ZERO,
-                                Account.AccountStatus.ACTIVE, LocalDateTime.now())));
+                                Account.AccountStatus.ACTIVE, LocalDateTime.now(),
+                                BigDecimal.ZERO, BigDecimal.ZERO)));
 
         mockMvc.perform(get("/api/accounts/me").with(user(mockUser())))
                 .andExpect(status().isOk())
@@ -144,7 +147,11 @@ class AccountControllerTest {
 
         mockMvc.perform(get("/api/accounts/{accountNumber}", ACC_NO).with(user(mockUser())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.accountNumber").value(ACC_NO));
+                .andExpect(jsonPath("$.data.accountNumber").value(ACC_NO))
+                // 원장잔액과 별도로 가용잔액·홀드 금액이 응답에 실린다
+                .andExpect(jsonPath("$.data.balance").value(10000))
+                .andExpect(jsonPath("$.data.availableBalance").value(7000))
+                .andExpect(jsonPath("$.data.heldAmount").value(3000));
     }
 
     @Test

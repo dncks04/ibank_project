@@ -23,6 +23,16 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
     @Query("SELECT a FROM Account a WHERE a.accountNumber = :accountNumber")
     Optional<Account> findByAccountNumberWithLock(@Param("accountNumber") String accountNumber);
 
+    /**
+     * 계좌 ID로 계좌번호만 읽는다(엔티티를 영속성 컨텍스트에 올리지 않는다).
+     *
+     * <p>락을 잡기 전에 계좌번호가 필요할 때 쓴다. {@code findById}나 지연 로딩으로 계좌 엔티티를 먼저 읽고
+     * 같은 트랜잭션에서 {@link #findByAccountNumberWithLock}을 호출하면, 그 사이 다른 트랜잭션이 잔액을 바꿨을 때
+     * 컨텍스트에 있는 옛 버전과 락 쿼리가 읽은 새 버전이 충돌해 Hibernate가 예외를 던진다.
+     */
+    @Query("SELECT a.accountNumber FROM Account a WHERE a.id = :id")
+    Optional<String> findAccountNumberById(@Param("id") Long id);
+
     boolean existsByAccountNumber(String accountNumber);
 
     List<Account> findAllByOwnerId(Long ownerId);

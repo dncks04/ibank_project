@@ -7,6 +7,7 @@ import com.ibank.domain.account.service.AccountAccessDeniedException;
 import com.ibank.domain.fraud.entity.FraudAlert;
 import com.ibank.domain.fraud.repository.FraudAlertRepository;
 import com.ibank.domain.fraud.service.FraudDetectionService;
+import com.ibank.domain.hold.service.HoldService;
 import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
@@ -42,6 +43,7 @@ public class TransferService {
     private final TransactionLimitService transactionLimitService;
     private final FraudDetectionService fraudDetectionService;
     private final FraudAlertRepository fraudAlertRepository;
+    private final HoldService holdService;
     private final IbankMetrics metrics;
 
     /**
@@ -134,6 +136,8 @@ public class TransferService {
             return holdSuspiciousTransfer(request, fromAccount, toAccount, fingerprint, triggeredRules);
         }
 
+        // 가용잔액 검증: 다른 보류 거래가 묶어 둔 금액은 이 이체로 빼 갈 수 없다 (출금 계좌 락 보유 상태)
+        holdService.requireAvailable(fromAccount, request.amount());
         fromAccount.withdraw(request.amount());
         toAccount.deposit(request.amount());
 
@@ -261,6 +265,8 @@ public class TransferService {
         // 1일 한도: 계좌 락 보유 상태에서 검증 (동시 요청이 잔여 한도를 나눠 우회하지 못함)
         transactionLimitService.validateDailyOutflow(account, request.amount());
 
+        // 가용잔액 검증: 보류 거래가 묶어 둔 금액은 출금할 수 없다 (계좌 락 보유 상태)
+        holdService.requireAvailable(account, request.amount());
         account.withdraw(request.amount());
 
         Transaction transaction = Transaction.builder()

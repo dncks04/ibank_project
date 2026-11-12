@@ -36,7 +36,7 @@ public record TransactionHistoryResponse(
                     ? tx.getFromAccount().getAccountNumber() : null;
             case WITHDRAWAL -> tx.getToAccount() != null
                     ? tx.getToAccount().getAccountNumber() : null;
-            case TRANSFER -> {
+            case TRANSFER, TD_OPEN, TD_TERMINATION -> {
                 boolean isSender = tx.getFromAccount() != null
                         && tx.getFromAccount().getId().equals(myAccountId);
                 yield isSender

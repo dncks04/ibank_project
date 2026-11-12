@@ -205,6 +205,7 @@ public class TransferService {
             return TransferResponse.from(existing.get());
         }
 
+        account.ensureCanReceive();
         account.deposit(request.amount());
 
         Transaction transaction = Transaction.builder()
@@ -260,6 +261,7 @@ public class TransferService {
         Account account = accountRepository.findByAccountNumber(accountNumber)
                 .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
+        account.ensureCanReceive();
         account.deposit(amount);
 
         Transaction transaction = Transaction.builder()

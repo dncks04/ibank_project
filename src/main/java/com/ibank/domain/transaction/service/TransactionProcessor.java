@@ -100,8 +100,8 @@ public class TransactionProcessor {
         Account from = accounts.from();
         Account to = accounts.to();
         requireOwner(from, userId, request.fromAccountNumber());
-        from.ensureActive();
-        to.ensureActive();
+        from.ensureCanSend();
+        to.ensureCanReceive();
         // 1일 한도: 오늘 완료된 출금 + 이미 묶여 있는 금액 + 이번 요청
         limitService.validateDailyOutflow(from, request.amount(), null);
 
@@ -134,7 +134,7 @@ public class TransactionProcessor {
         }
 
         requireOwner(account, userId, request.accountNumber());
-        account.ensureActive();
+        account.ensureCanSend();
         limitService.validateDailyOutflow(account, request.amount(), null);
 
         Transaction tx = Transaction.builder()
@@ -337,9 +337,9 @@ public class TransactionProcessor {
          */
         void revalidate() {
             BigDecimal amount = tx.getAmount();
-            from.ensureActive();
+            from.ensureCanSend();
             if (to != null) {
-                to.ensureActive();
+                to.ensureCanReceive();
             }
             limitService.validateAmount(amount);
             // 이 거래의 홀드는 이미 한도 사용량에 들어 있으므로 빼고 계산한다

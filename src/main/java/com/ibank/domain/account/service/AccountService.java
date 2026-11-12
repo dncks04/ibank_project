@@ -19,9 +19,6 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.security.SecureRandom;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,14 +28,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AccountService {
 
-    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
-    private final SecureRandom secureRandom = new SecureRandom();
-
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
     private final LedgerService ledgerService;
     private final AccountHoldRepository holdRepository;
     private final DomainEvents events;
+    private final AccountNumberGenerator accountNumberGenerator;
 
     @Audited(action = "ACCOUNT_OPEN", target = "#result.accountNumber")
     @Transactional
@@ -56,7 +51,7 @@ public class AccountService {
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
 
         Account account = Account.builder()
-                .accountNumber(generateUniqueAccountNumber())
+                .accountNumber(accountNumberGenerator.generate())
                 .owner(owner)
                 .initialBalance(request.initialBalance())
                 .openIdempotencyKey(request.idempotencyKey())
@@ -114,18 +109,6 @@ public class AccountService {
                 .map(account -> AccountResponse.from(account,
                         heldByAccount.getOrDefault(account.getId(), BigDecimal.ZERO)))
                 .toList();
-    }
-
-    // 계좌번호: YYYYMMDD(8) + 랜덤6자리 = 14자리
-    private String generateUniqueAccountNumber() {
-        String prefix = LocalDate.now().format(DATE_FMT);
-        for (int attempt = 0; attempt < 5; attempt++) {
-            String candidate = prefix + String.format("%06d", secureRandom.nextInt(1_000_000));
-            if (!accountRepository.existsByAccountNumber(candidate)) {
-                return candidate;
-            }
-        }
-        throw new IllegalStateException("계좌번호 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     }
 
     @Audited(action = "ACCOUNT_CLOSE", target = "#accountNumber")

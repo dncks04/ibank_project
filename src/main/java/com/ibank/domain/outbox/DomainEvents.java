@@ -74,10 +74,31 @@ public class DomainEvents {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("accountNumber", account.getAccountNumber());
         payload.put("customerId", account.getOwner().getId());
-        payload.put("accountType", "DEMAND");
+        payload.put("accountType", account.getAccountType().name());
         payload.put("initialBalance", initialBalance != null ? money(initialBalance) : null);
         payload.put("reasonCode", reasonCode);
         recorder.record(type, account.getAccountNumber(), payload);
+    }
+
+    /**
+     * 정기예금 해지. FDS 서비스가 "예적금 해지 직후 전액 이체" 같은 패턴을 볼 수 있도록,
+     * 해지된 계좌와 돈이 들어간 입출금 계좌, 금액을 함께 싣는다.
+     *
+     * @param early 만기 전 해지였는지
+     */
+    public void timeDepositTerminated(Account timeDeposit, Account payout, Transaction tx,
+                                      BigDecimal principal, BigDecimal interest, boolean early) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("accountNumber", timeDeposit.getAccountNumber());
+        payload.put("payoutAccountNumber", payout.getAccountNumber());
+        payload.put("customerId", timeDeposit.getOwner().getId());
+        payload.put("transactionId", tx.getId());
+        payload.put("principal", money(principal));
+        payload.put("interest", money(interest));
+        payload.put("payoutAmount", money(principal.add(interest)));
+        payload.put("early", early);
+        payload.put("maturityDate", timeDeposit.getMaturityDate().toString());
+        recorder.record(EventType.TIME_DEPOSIT_TERMINATED, timeDeposit.getAccountNumber(), payload);
     }
 
     private Map<String, Object> decisionOf(TransactionDecision decision) {

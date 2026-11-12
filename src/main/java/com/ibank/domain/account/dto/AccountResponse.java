@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
  * @param balance          원장잔액. 원장 분개의 합과 항상 같다.
  * @param availableBalance 가용잔액 = 원장잔액 − 묶인 금액. 출금·이체는 이 금액까지만 가능하다.
  * @param heldAmount       판정 대기·보류 중인 거래로 묶인 금액(ACTIVE 홀드 합계).
+ * @param accountType      계좌 유형(DEMAND 입출금 / TIME_DEPOSIT 정기예금).
  */
 public record AccountResponse(
         Long id,
@@ -19,7 +20,8 @@ public record AccountResponse(
         Account.AccountStatus status,
         LocalDateTime createdAt,
         BigDecimal availableBalance,
-        BigDecimal heldAmount
+        BigDecimal heldAmount,
+        Account.AccountType accountType
 ) {
     public static AccountResponse from(Account account, BigDecimal heldAmount) {
         return new AccountResponse(
@@ -29,7 +31,8 @@ public record AccountResponse(
                 account.getStatus(),
                 account.getCreatedAt(),
                 account.getBalance().subtract(heldAmount),
-                heldAmount
+                heldAmount,
+                account.getAccountType()
         );
     }
 }

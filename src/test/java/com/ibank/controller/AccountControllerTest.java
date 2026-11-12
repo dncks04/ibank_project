@@ -73,7 +73,7 @@ class AccountControllerTest {
         // 원장잔액 10,000 중 3,000이 홀드로 묶여 가용잔액은 7,000
         return new AccountResponse(1L, ACC_NO, new BigDecimal("10000"),
                 Account.AccountStatus.ACTIVE, LocalDateTime.now(),
-                new BigDecimal("7000"), new BigDecimal("3000"));
+                new BigDecimal("7000"), new BigDecimal("3000"), Account.AccountType.DEMAND);
     }
 
     // ── 계좌 개설 ──────────────────────────────────────────
@@ -122,7 +122,7 @@ class AccountControllerTest {
                 List.of(sampleAccountResponse(),
                         new AccountResponse(2L, "20260604000002", BigDecimal.ZERO,
                                 Account.AccountStatus.ACTIVE, LocalDateTime.now(),
-                                BigDecimal.ZERO, BigDecimal.ZERO)));
+                                BigDecimal.ZERO, BigDecimal.ZERO, Account.AccountType.DEMAND)));
 
         mockMvc.perform(get("/api/accounts/me").with(user(mockUser())))
                 .andExpect(status().isOk())

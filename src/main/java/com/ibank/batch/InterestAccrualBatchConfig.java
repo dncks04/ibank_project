@@ -69,6 +69,9 @@ public class InterestAccrualBatchConfig {
             if (account.getStatus() != Account.AccountStatus.ACTIVE) {
                 return null; // 정지/해지 계좌는 적립 대상 아님
             }
+            if (account.isTimeDeposit()) {
+                return null; // 정기예금 이자는 약정 금리로 해지 때 한 번에 지급한다 (일일 적립 대상 아님)
+            }
             if (interestAccrualRepository.existsByAccountIdAndAccrualDate(account.getId(), accrualDate)) {
                 return null; // 같은 날 이미 적립됨 → 멱등 skip
             }

@@ -164,7 +164,11 @@ public class Transaction {
     }
 
     public enum TransactionType {
-        DEPOSIT, WITHDRAWAL, TRANSFER
+        DEPOSIT, WITHDRAWAL, TRANSFER,
+        /** 정기예금 가입: 입출금 계좌 → 정기예금 계좌 */
+        TD_OPEN,
+        /** 정기예금 해지: 정기예금 계좌 → 입출금 계좌 (원금) */
+        TD_TERMINATION
     }
 
     public enum Channel {

@@ -40,7 +40,7 @@ public class InternalCustomerService {
         List<CustomerProfileResponse.AccountSummary> accounts = accountRepository.findAllByOwnerId(customerId).stream()
                 .map(account -> new CustomerProfileResponse.AccountSummary(
                         account.getAccountNumber(),
-                        "DEMAND",
+                        account.getAccountType().name(),
                         account.getStatus().name(),
                         format(account.getCreatedAt())))
                 .toList();

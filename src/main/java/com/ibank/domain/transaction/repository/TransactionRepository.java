@@ -42,7 +42,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
     /**
      * 기간 내에 <b>완료된</b> 출금(출금·이체의 출금 측) 금액 합계. 1일 한도 검증용.
-     * fromAccount가 이 계좌인 거래만 집계하므로 TRANSFER·WITHDRAWAL이 포함되고 DEPOSIT은 제외된다.
+     * 이체·출금만 센다. 정기예금 가입·해지처럼 고객 자신의 계좌 사이를 오가는 자금은 한도 대상이 아니다.
      *
      * <p>요청 시각(created_at)이 아니라 완료 시각(completed_at)으로 센다. 보류됐다가 다른 날 실행된 거래를
      * 실제로 돈이 나간 날의 한도에 잡기 위함이다. 부분 인덱스 (from_account_id, completed_at) WHERE COMPLETED를 탄다.
@@ -51,6 +51,8 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
             SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t
             WHERE t.fromAccount.id = :accountId
               AND t.status = com.ibank.domain.transaction.entity.Transaction.TransactionStatus.COMPLETED
+              AND t.type IN (com.ibank.domain.transaction.entity.Transaction.TransactionType.TRANSFER,
+                             com.ibank.domain.transaction.entity.Transaction.TransactionType.WITHDRAWAL)
               AND t.completedAt >= :from AND t.completedAt < :to
             """)
     BigDecimal sumCompletedOutflow(

@@ -416,7 +416,10 @@ components:
       example: '1500000'
     TransactionType:
       type: string
-      enum: [DEPOSIT, WITHDRAWAL, TRANSFER]
+      enum: [DEPOSIT, WITHDRAWAL, TRANSFER, TD_OPEN, TD_TERMINATION]
+      description: |
+        `TD_OPEN`(정기예금 가입: 입출금 → 정기예금), `TD_TERMINATION`(정기예금 해지 원금: 정기예금 → 입출금)은
+        고객 자신의 계좌 사이를 오가는 자금이라 판정 대상이 아니고 1일 한도에도 잡히지 않는다. 거래 이력에는 나온다.
     Channel:
       type: string
       enum: [MOBILE, TELLER, ATM]
@@ -577,6 +580,7 @@ components:
             - $ref: '#/components/schemas/TransactionEventPayload'
             - $ref: '#/components/schemas/DepositEventPayload'
             - $ref: '#/components/schemas/AccountEventPayload'
+            - $ref: '#/components/schemas/TimeDepositTerminatedPayload'
     TransactionEventPayload:
       type: object
       description: TRANSACTION_* 이벤트. 이체·출금만 해당한다.
@@ -605,6 +609,23 @@ components:
         amount: { $ref: '#/components/schemas/Money' }
         customerId: { type: integer, format: int64 }
         channel: { $ref: '#/components/schemas/Channel' }
+    TimeDepositTerminatedPayload:
+      type: object
+      description: |
+        TIME_DEPOSIT_TERMINATED. aggregateId는 해지된 정기예금 계좌번호다.
+        해지 대금은 `payoutAccountNumber`로 들어가므로, 이후 그 계좌에서 나가는 이체(`TRANSACTION_REQUESTED`의
+        `fromAccountNumber`)와 이어 보면 "해지 직후 전액 이체"를 알아볼 수 있다.
+      required: [accountNumber, payoutAccountNumber, customerId, transactionId, principal, interest, payoutAmount, early, maturityDate]
+      properties:
+        accountNumber: { type: string, description: 해지된 정기예금 계좌 }
+        payoutAccountNumber: { type: string, description: 원금과 이자를 받은 입출금 계좌 }
+        customerId: { type: integer, format: int64 }
+        transactionId: { type: integer, format: int64, description: 원금 이동 거래(TD_TERMINATION) }
+        principal: { $ref: '#/components/schemas/Money' }
+        interest: { $ref: '#/components/schemas/Money' }
+        payoutAmount: { allOf: [{ $ref: '#/components/schemas/Money' }], description: principal + interest }
+        early: { type: boolean, description: 만기 전 해지(중도해지)였는지 }
+        maturityDate: { type: string, format: date }
     AccountEventPayload:
       type: object
       description: ACCOUNT_OPENED / ACCOUNT_CLOSED / ACCOUNT_FROZEN / ACCOUNT_UNFROZEN

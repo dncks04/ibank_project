@@ -3,7 +3,9 @@ package com.ibank.domain.transaction.repository;
 import com.ibank.domain.transaction.entity.Transaction;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -16,19 +18,30 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     Optional<Transaction> findByIdempotencyKey(String idempotencyKey);
 
     /**
-     * 기간 내 특정 계좌에서 빠져나간(출금·이체의 출금 측) 거래 금액 합계. 1일 한도 검증용.
+     * 거래 행을 잠그고 읽는다. 같은 거래에 대한 확정·실행·취소·만료를 직렬화한다.
+     *
+     * <p>한 트랜잭션에서 이 거래를 <b>처음 읽을 때</b> 써야 한다. 락 없이 먼저 읽은 인스턴스가 영속성 컨텍스트에
+     * 있으면 이 쿼리는 그 인스턴스를 그대로 돌려주므로(행은 잠기지만 상태는 옛것), 잠근 뒤의 상태 확인이 무의미해진다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT t FROM Transaction t WHERE t.id = :id")
+    Optional<Transaction> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * 기간 내에 <b>완료된</b> 출금(출금·이체의 출금 측) 금액 합계. 1일 한도 검증용.
      * fromAccount가 이 계좌인 거래만 집계하므로 TRANSFER·WITHDRAWAL이 포함되고 DEPOSIT은 제외된다.
-     * (from_account_id, created_at) 인덱스를 탄다.
+     *
+     * <p>요청 시각(created_at)이 아니라 완료 시각(completed_at)으로 센다. 보류됐다가 다른 날 실행된 거래를
+     * 실제로 돈이 나간 날의 한도에 잡기 위함이다. 부분 인덱스 (from_account_id, completed_at) WHERE COMPLETED를 탄다.
      */
     @Query("""
             SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t
             WHERE t.fromAccount.id = :accountId
-              AND t.status = :status
-              AND t.createdAt >= :from AND t.createdAt < :to
+              AND t.status = com.ibank.domain.transaction.entity.Transaction.TransactionStatus.COMPLETED
+              AND t.completedAt >= :from AND t.completedAt < :to
             """)
-    BigDecimal sumOutflowAmount(
+    BigDecimal sumCompletedOutflow(
             @Param("accountId") Long accountId,
-            @Param("status") Transaction.TransactionStatus status,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 

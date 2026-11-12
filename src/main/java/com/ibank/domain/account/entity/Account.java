@@ -81,6 +81,11 @@ public class Account {
         this.closeIdempotencyKey = idempotencyKey;
     }
 
+    /** 거래에 쓸 수 있는 계좌인지 확인한다. 자금을 옮기기 전에 미리 검증할 때 쓴다. */
+    public void ensureActive() {
+        validateActive();
+    }
+
     private void validateActive() {
         if (this.status != AccountStatus.ACTIVE) {
             throw new com.ibank.domain.account.exception.InactiveAccountException();

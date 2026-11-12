@@ -1,20 +1,12 @@
 package com.ibank.domain.fraud.service;
 
-import com.ibank.domain.account.entity.Account;
-import com.ibank.domain.account.exception.AccountNotFoundException;
-import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.fraud.dto.FraudAlertResponse;
 import com.ibank.domain.fraud.entity.FraudAlert;
 import com.ibank.domain.fraud.exception.FraudAlertAlreadyResolvedException;
 import com.ibank.domain.fraud.exception.FraudAlertNotFoundException;
 import com.ibank.domain.fraud.repository.FraudAlertRepository;
-import com.ibank.domain.hold.service.HoldService;
-import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.transaction.dto.TransferResponse;
-import com.ibank.domain.transaction.entity.Transaction;
-import com.ibank.domain.transaction.exception.HeldTransactionNotFoundException;
-import com.ibank.domain.transaction.repository.TransactionRepository;
-import com.ibank.domain.transaction.service.TransactionLimitService;
+import com.ibank.domain.transaction.service.TransactionProcessor;
 import com.ibank.global.audit.Audited;
 import com.ibank.global.metrics.IbankMetrics;
 import lombok.RequiredArgsConstructor;
@@ -22,30 +14,23 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 /**
  * 이상거래로 보류(HELD)된 이체에 대한 운영자 검토 처리.
  *
- * <p>FDS는 의심 이체를 차단이 아니라 <b>보류</b>한다({@code TransferService.holdSuspiciousTransfer}).
- * 자금은 이동하지 않은 채 거래는 HELD, 경보는 OPEN으로 남는다. 이 서비스가 그 경보를 받아
- * <b>승인(release)</b> 시 실제 이체를 수행하거나 <b>반려(reject)</b> 시 거래를 취소한다.
+ * <p><b>이관 전 임시 경로.</b> 보류 거래의 실행·취소 자체는 {@link TransactionProcessor}가 맡고
+ * (FDS 서비스가 호출할 내부 API와 같은 로직), 이 서비스는 그 위에 관리자 검토용 경보의 상태만 관리한다.
+ * 탐지 책임이 FDS 서비스로 넘어가는 단계에서 경보와 함께 삭제한다.
  *
- * <p>승인은 보류 시점이 아니라 <b>검토 시점</b>의 잔액·한도를 다시 검증해야 하므로,
- * 출금/입금 계좌의 비관적 락을 (데드락 방지를 위해 계좌번호 오름차순으로) 재획득한 뒤
- * {@code TransferService.transfer}와 동일한 경로(검증 → withdraw/deposit → 복식부기 분개)로 처리한다.
+ * <p>락 순서: 경보 행 → 거래 행 → 계좌. 경보 락은 이 서비스만 잡으므로 다른 경로와 순환하지 않는다.
  */
 @Service
 @RequiredArgsConstructor
 public class FraudReviewService {
 
     private final FraudAlertRepository fraudAlertRepository;
-    private final TransactionRepository transactionRepository;
-    private final AccountRepository accountRepository;
-    private final TransactionLimitService transactionLimitService;
-    private final LedgerService ledgerService;
-    private final HoldService holdService;
+    private final TransactionProcessor transactionProcessor;
     private final IbankMetrics metrics;
 
     /** 상태별 경보 목록(최신순). 운영자 검토 큐 조회용. */
@@ -57,62 +42,34 @@ public class FraudReviewService {
     }
 
     /**
-     * 보류된 이체를 승인해 실제로 자금을 옮긴다. 검토 시점의 잔액·한도를 다시 검증하므로,
-     * 잔액 부족 등으로 검증에 실패하면 트랜잭션이 롤백되어 경보는 OPEN으로 남는다(재검토/반려 가능).
+     * 보류된 이체를 승인해 실제로 자금을 옮긴다. 검토 시점의 계좌 상태·한도·가용잔액을 다시 검증하므로,
+     * 검증에 실패하면 트랜잭션이 롤백되어 거래는 HELD, 경보는 OPEN으로 남는다(재검토/반려 가능).
      */
     @Audited(action = "FRAUD_RELEASE", target = "#alertId")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse release(Long alertId) {
         FraudAlert alert = loadOpenAlertForReview(alertId);
-        Transaction tx = loadHeldTransaction(alert);
-
-        // 계좌번호만 읽는다(엔티티를 락 전에 로딩하면 락 쿼리와 버전이 충돌할 수 있다). getId()는 프록시를 초기화하지 않는다.
-        String fromNumber = accountRepository.findAccountNumberById(tx.getFromAccount().getId()).orElseThrow();
-        String toNumber = accountRepository.findAccountNumberById(tx.getToAccount().getId()).orElseThrow();
-        BigDecimal amount = tx.getAmount();
-
-        // 데드락 방지: 항상 계좌번호 오름차순으로 락 획득 (TransferService와 동일한 전역 순서)
-        List<String> sorted = List.of(fromNumber, toNumber).stream().sorted().toList();
-        Account first = accountRepository.findByAccountNumberWithLock(sorted.get(0))
-                .orElseThrow(() -> new AccountNotFoundException(sorted.get(0)));
-        Account second = accountRepository.findByAccountNumberWithLock(sorted.get(1))
-                .orElseThrow(() -> new AccountNotFoundException(sorted.get(1)));
-        Account fromAccount = first.getAccountNumber().equals(fromNumber) ? first : second;
-        Account toAccount = first.getAccountNumber().equals(toNumber) ? first : second;
-
-        // 검토 시점 재검증: 단건 한도 → 1일 누적 출금 한도(락 보유 상태) → 잔액(withdraw 내부 검증)
-        transactionLimitService.validateAmount(amount);
-        transactionLimitService.validateDailyOutflow(fromAccount, amount);
-
-        // 가용잔액 기준: 이 거래 자체는 아직 금액을 묶지 않으므로(2단계 처리 도입 전), 다른 홀드가 묶은 금액만 제외된다
-        holdService.requireAvailable(fromAccount, amount);
-        fromAccount.withdraw(amount);
-        toAccount.deposit(amount);
-
-        tx.release();
-        // 복식부기: 보류 시점에는 분개하지 않았으므로 승인 시점에 출금 DEBIT + 입금 CREDIT 기록 (합 0)
-        ledgerService.recordTransfer(tx, fromAccount, toAccount, amount);
+        // 같은 트랜잭션에 참여한다: 실행과 경보 처리가 함께 커밋되거나 함께 롤백된다
+        TransferResponse result = transactionProcessor.executeHeld(alert.getTransactionId());
         alert.resolve();
 
         metrics.countOperation("FRAUD_RELEASE", "SUCCESS");
-        return TransferResponse.from(tx);
+        return result;
     }
 
     /**
-     * 보류된 이체를 반려한다. 자금을 옮기지 않고 거래를 취소(CANCELLED)하며 경보를 처리한다.
+     * 보류된 이체를 반려한다. 자금을 옮기지 않고 거래를 취소(CANCELLED)하며 묶인 금액을 푼다.
      * 원장 항목을 만들지 않으므로 잔액·정산 불변식에 영향이 없다.
      */
     @Audited(action = "FRAUD_REJECT", target = "#alertId")
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse reject(Long alertId) {
         FraudAlert alert = loadOpenAlertForReview(alertId);
-        Transaction tx = loadHeldTransaction(alert);
-
-        tx.reject();
+        TransferResponse result = transactionProcessor.cancelHeld(alert.getTransactionId());
         alert.resolve();
 
         metrics.countOperation("FRAUD_REJECT", "SUCCESS");
-        return TransferResponse.from(tx);
+        return result;
     }
 
     /**
@@ -129,11 +86,5 @@ public class FraudReviewService {
             throw new FraudAlertAlreadyResolvedException(alertId);
         }
         return alert;
-    }
-
-    private Transaction loadHeldTransaction(FraudAlert alert) {
-        return transactionRepository.findById(alert.getTransactionId())
-                .filter(t -> t.getStatus() == Transaction.TransactionStatus.HELD)
-                .orElseThrow(() -> new HeldTransactionNotFoundException(alert.getTransactionId()));
     }
 }

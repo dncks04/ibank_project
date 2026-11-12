@@ -213,21 +213,29 @@ class FraudReviewTest {
     }
 
     @Test
-    @DisplayName("승인 시점에 잔액이 부족하면 롤백되어 경보는 OPEN으로 남는다")
-    void release_insufficientBalance_keepsAlertOpen() {
+    @DisplayName("보류 중에는 묶인 금액을 출금으로 소진할 수 없어, 승인 시점에 잔액이 모자라는 일이 생기지 않는다")
+    void heldAmount_cannotBeDrained_soReleaseAlwaysHasFunds() {
+        // 예전에는 보류가 금액을 묶지 않아, 보류 사이에 잔액을 다 빼면 승인이 잔액 부족으로 실패했다.
+        // 이제 보류 금액은 홀드로 묶이므로 그 시나리오 자체가 막힌다.
         FraudAlert alert = createHeldTransfer(new BigDecimal("5000"));
 
-        // 보류 사이에 잔액을 정상 출금으로 소진 → 검토 시점 잔액 < 이체 금액
-        transferService.withdraw(userId, new WithdrawRequest(
-                fromAcc, new BigDecimal("9999000"), UUID.randomUUID().toString(), "잔액 소진"));
-
-        assertThatThrownBy(() -> fraudReviewService.release(alert.getId()))
+        // 잔액 10,000,000 중 5,000이 묶여 가용잔액은 9,995,000 → 그보다 큰 출금은 거절
+        assertThatThrownBy(() -> transferService.withdraw(userId, new WithdrawRequest(
+                fromAcc, new BigDecimal("9999000"), UUID.randomUUID().toString(), "잔액 소진 시도")))
                 .isInstanceOf(com.ibank.domain.account.entity.InsufficientBalanceException.class);
 
-        // 롤백: 거래는 여전히 HELD, 경보는 여전히 OPEN (재검토/반려 가능)
-        assertThat(transactionRepository.findById(alert.getTransactionId()).orElseThrow().getStatus())
-                .isEqualTo(Transaction.TransactionStatus.HELD);
+        // 가용잔액을 전부 빼도 묶인 5,000은 남아 있으므로 승인은 성공한다
+        transferService.withdraw(userId, new WithdrawRequest(
+                fromAcc, new BigDecimal("9995000"), UUID.randomUUID().toString(), "가용잔액 전액 출금"));
+        TransferResponse result = fraudReviewService.release(alert.getId());
+
+        assertThat(result.status()).isEqualTo(Transaction.TransactionStatus.COMPLETED);
+        assertThat(accountRepository.findByAccountNumber(fromAcc).orElseThrow().getBalance())
+                .isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(accountRepository.findByAccountNumber(toAcc).orElseThrow().getBalance())
+                .isEqualByComparingTo(new BigDecimal("5000"));
         assertThat(fraudAlertRepository.findById(alert.getId()).orElseThrow().getStatus())
-                .isEqualTo(FraudAlert.Status.OPEN);
+                .isEqualTo(FraudAlert.Status.RESOLVED);
+        assertThat(reconciliationService.findInconsistentAccounts()).isEmpty();
     }
 }

@@ -78,7 +78,8 @@ class TransactionControllerTest {
 
     private TransferResponse sampleTransferResponse(String fromAcc, String toAcc) {
         return new TransferResponse(1L, UUID.randomUUID().toString(), fromAcc, toAcc,
-                new BigDecimal("5000"), Transaction.TransactionStatus.COMPLETED, LocalDateTime.now());
+                new BigDecimal("5000"), Transaction.TransactionStatus.COMPLETED, LocalDateTime.now(),
+                java.util.List.of());
     }
 
     // ── 입금 ──────────────────────────────────────────────

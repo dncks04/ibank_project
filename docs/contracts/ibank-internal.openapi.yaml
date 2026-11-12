@@ -432,8 +432,11 @@ components:
           items: { type: string }
         decisionSource:
           type: string
-          enum: [FDS, FALLBACK]
-          description: FALLBACK = FDS 호출 실패로 ibank 대체 정책이 판정함.
+          enum: [FDS, FALLBACK, LOCAL]
+          description: |
+            - `FDS`: B가 판정함.
+            - `FALLBACK`: FDS 호출 실패로 ibank 대체 정책이 판정함.
+            - `LOCAL`: ibank가 FDS를 연동하지 않은 모드(개발·테스트용, 항상 승인)로 떠 있음. 통합 환경에서는 나오지 않아야 한다.
     TransactionState:
       type: object
       required: [transactionId, type, channel, status, amount, createdAt]

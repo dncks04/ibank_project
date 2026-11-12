@@ -72,7 +72,7 @@ class FraudAlertControllerTest {
     void release_asAdmin_ok() throws Exception {
         given(fraudReviewService.release(anyLong())).willReturn(new TransferResponse(
                 1L, "key", "111", "222", new BigDecimal("5000"),
-                Transaction.TransactionStatus.COMPLETED, LocalDateTime.now()));
+                Transaction.TransactionStatus.COMPLETED, LocalDateTime.now(), java.util.List.of()));
 
         mockMvc.perform(post("/api/admin/fraud-alerts/{id}/release", 1L)
                         .with(user("admin").roles("ADMIN")).with(csrf()))

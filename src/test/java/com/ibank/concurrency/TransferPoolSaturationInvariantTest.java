@@ -70,6 +70,7 @@ class TransferPoolSaturationInvariantTest {
     @Autowired private LedgerEntryRepository ledgerEntryRepository;
     @Autowired private ReconciliationService reconciliationService;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private static final BigDecimal INITIAL_EACH = new BigDecimal("50000");
     private static final BigDecimal TOTAL = new BigDecimal("100000");
@@ -158,6 +159,24 @@ class TransferPoolSaturationInvariantTest {
                 .as("모든 분개의 차변/대변 합이 0").isEmpty();
         assertThat(reconciliationService.trialBalance())
                 .as("전 원장 시산표 == 0").isEqualByComparingTo(BigDecimal.ZERO);
+
+        // 2단계 처리에서는 가승인(1단계)만 커밋되고 확정(3단계)이 커넥션을 못 얻어 끝난 거래가 남을 수 있다.
+        // 그런 거래는 돈을 옮기지 않았고(위 단언), 금액이 묶인 PENDING_REVIEW로만 남아야 복구 배치가 처리할 수 있다.
+        Long mismatched = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM transactions t
+                LEFT JOIN account_holds h ON h.transaction_id = t.id
+                WHERE (t.status IN ('PENDING_REVIEW', 'HELD')) <> (h.status IS NOT DISTINCT FROM 'ACTIVE')
+                """, Long.class);
+        assertThat(mismatched).as("미확정 거래 ⇔ ACTIVE 홀드").isZero();
+        Long unexpectedStatus = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM transactions WHERE status NOT IN ('COMPLETED', 'PENDING_REVIEW')", Long.class);
+        assertThat(unexpectedStatus).as("거래는 완료됐거나 판정 대기로 남았거나 둘 중 하나").isZero();
+        for (Account account : List.of(a, b)) {
+            BigDecimal held = jdbcTemplate.queryForObject(
+                    "SELECT COALESCE(SUM(amount), 0) FROM account_holds WHERE account_id = ? AND status = 'ACTIVE'",
+                    BigDecimal.class, account.getId());
+            assertThat(account.getBalance().subtract(held)).as("가용잔액 음수 불가").isGreaterThanOrEqualTo(BigDecimal.ZERO);
+        }
     }
 
     /**
@@ -186,8 +205,11 @@ class TransferPoolSaturationInvariantTest {
         Account a = accountRepository.findByAccountNumber(accA).orElseThrow();
         Account b = accountRepository.findByAccountNumber(accB).orElseThrow();
 
-        System.out.printf("[포화] 요청=%d 실패=%d %s 완료거래=%d | A=%s B=%s 합=%s%n",
-                PAIRS * 2, errors.size(), byType, completedTx,
+        long pendingTx = transactionRepository.findAll().stream()
+                .filter(t -> t.getStatus() == Transaction.TransactionStatus.PENDING_REVIEW)
+                .count();
+        System.out.printf("[포화] 요청=%d 실패=%d %s 완료거래=%d 미확정거래=%d | A=%s B=%s 합=%s%n",
+                PAIRS * 2, errors.size(), byType, completedTx, pendingTx,
                 a.getBalance(), b.getBalance(), a.getBalance().add(b.getBalance()));
     }
 

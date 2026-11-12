@@ -1,7 +1,8 @@
 package com.ibank.domain.transaction.service;
 
 import com.ibank.domain.account.entity.Account;
-import com.ibank.domain.transaction.entity.Transaction;
+import com.ibank.domain.hold.entity.AccountHold;
+import com.ibank.domain.hold.repository.AccountHoldRepository;
 import com.ibank.domain.transaction.exception.DailyLimitExceededException;
 import com.ibank.domain.transaction.exception.TransactionLimitExceededException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
@@ -30,6 +31,7 @@ public class TransactionLimitService {
 
     private final TransactionLimitProperties properties;
     private final TransactionRepository transactionRepository;
+    private final AccountHoldRepository holdRepository;
     private final BusinessClock businessClock;
 
     /** 단건(1회) 거래 한도. 이체/입금/출금 공통. */
@@ -40,17 +42,30 @@ public class TransactionLimitService {
     }
 
     /**
-     * 1일 누적 출금(이체+출금) 한도. 당일 완료된 출금 합계 + 이번 요청이 한도를 넘으면 거부.
-     * 거부된 요청은 거래를 생성하지 않으므로 한도를 소모하지 않는다.
+     * 1일 누적 출금(이체+출금) 한도.
+     *
+     * <p>사용량 = <b>오늘 완료된 출금 합계 + 지금 묶여 있는 금액(ACTIVE 홀드 합계)</b>.
+     *
+     * <ul>
+     *   <li>완료 출금은 요청 시각이 아니라 <b>완료 시각</b>으로 센다. 어제 보류됐다가 오늘 실행된 거래는
+     *       오늘 빠져나간 돈이다. 요청 시각으로 세면 그 거래는 어느 날의 한도에도 잡히지 않는다.</li>
+     *   <li>묶여 있는 금액도 사용량이다. 세지 않으면 한도 이내의 이체를 여러 건 보류시켜 둔 뒤
+     *       한꺼번에 실행시켜 한도를 넘길 수 있다. 홀드가 취소·만료로 풀리면 ACTIVE가 아니게 되므로
+     *       사용량에서 즉시 빠진다.</li>
+     *   <li>"오늘"은 영업 타임존 기준이다.</li>
+     * </ul>
+     *
+     * @param ownHold 이 거래 자신의 홀드. 보류된 거래를 실행할 때는 그 금액이 이미 사용량에 들어 있으므로
+     *                빼고 계산한다. 새 거래를 가승인할 때는 null.
      */
-    public void validateDailyOutflow(Account account, BigDecimal amount) {
-        // "당일"은 서버 타임존이 아니라 영업 타임존 기준이다 (컨테이너가 UTC여도 한국 자정에 한도가 초기화된다).
+    public void validateDailyOutflow(Account account, BigDecimal amount, AccountHold ownHold) {
         BusinessClock.DayRange today = businessClock.todayRange();
-        BigDecimal used = transactionRepository.sumOutflowAmount(
-                account.getId(),
-                Transaction.TransactionStatus.COMPLETED,
-                today.start(),
-                today.end());
+        BigDecimal completed = transactionRepository.sumCompletedOutflow(account.getId(), today.start(), today.end());
+        BigDecimal held = holdRepository.sumActiveAmount(account.getId());
+        if (ownHold != null && ownHold.isActive()) {
+            held = held.subtract(ownHold.getAmount());
+        }
+        BigDecimal used = completed.add(held);
         if (used.add(amount).compareTo(properties.dailyOutflowMax()) > 0) {
             throw new DailyLimitExceededException(
                     account.getAccountNumber(), used, amount, properties.dailyOutflowMax());

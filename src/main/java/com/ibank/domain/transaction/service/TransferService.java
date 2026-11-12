@@ -4,82 +4,92 @@ import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.exception.AccountNotFoundException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
-import com.ibank.domain.fraud.entity.FraudAlert;
-import com.ibank.domain.fraud.repository.FraudAlertRepository;
-import com.ibank.domain.fraud.service.FraudDetectionService;
-import com.ibank.domain.hold.service.HoldService;
+import com.ibank.domain.decision.FraudDecisionPort.Decision;
+import com.ibank.domain.decision.FraudDecisionService;
 import com.ibank.domain.ledger.service.LedgerService;
 import com.ibank.domain.transaction.dto.DepositRequest;
 import com.ibank.domain.transaction.dto.TransferRequest;
 import com.ibank.domain.transaction.dto.TransferResponse;
 import com.ibank.domain.transaction.dto.WithdrawRequest;
 import com.ibank.domain.transaction.entity.Transaction;
+import com.ibank.domain.transaction.entity.Transaction.Channel;
 import com.ibank.domain.transaction.exception.IdempotencyKeyConflictException;
 import com.ibank.domain.transaction.exception.SameAccountTransferException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
+import com.ibank.domain.transaction.service.TransactionProcessor.Outcome;
+import com.ibank.domain.transaction.service.TransactionProcessor.Reservation;
 import com.ibank.global.audit.Audited;
 import com.ibank.global.metrics.IbankMetrics;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Optional;
 
+/**
+ * 거래 요청의 진입점.
+ *
+ * <p>이체와 출금은 <b>2단계 처리</b>를 탄다. 이 클래스는 세 단계를 순서대로 부르는 조율만 하고
+ * 트랜잭션은 열지 않는다. 각 단계의 트랜잭션은 {@link TransactionProcessor}가 따로 연다.
+ *
+ * <pre>
+ * 1) 가승인  — 짧은 트랜잭션, 계좌 락 보유. 거래 PENDING_REVIEW + 홀드 ACTIVE 저장 후 커밋
+ * 2) 판정    — 락도 DB 커넥션도 쥐지 않은 상태에서 판정 포트 호출 (외부 HTTP일 수 있다)
+ * 3) 확정    — 짧은 트랜잭션, 락 재획득. APPROVE면 자금 이동, HOLD면 보류
+ * </pre>
+ *
+ * <p>판정을 락 안에서 기다리지 않는 이유: 판정 서비스가 느려지면 그동안 출금 계좌의 행 락과 커넥션이
+ * 묶여, 같은 계좌의 다른 거래와 커넥션 풀 전체가 함께 멈춘다. 대신 금액을 홀드로 묶어 두므로,
+ * 판정을 기다리는 동안에도 같은 돈이 다른 출금으로 빠져나가지 못한다.
+ *
+ * <p>입금은 판정 대상이 아니므로 한 트랜잭션으로 바로 처리한다.
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TransferService {
+
+    /** 3단계가 락 대기·커넥션 획득 실패로 넘어졌을 때의 재시도 횟수. */
+    private static final int APPLY_ATTEMPTS = 3;
+    private static final long APPLY_RETRY_BACKOFF_MS = 100;
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final LedgerService ledgerService;
     private final TransactionLimitService transactionLimitService;
-    private final FraudDetectionService fraudDetectionService;
-    private final FraudAlertRepository fraudAlertRepository;
-    private final HoldService holdService;
+    private final TransactionProcessor processor;
+    private final FraudDecisionService fraudDecisionService;
+    private final IdempotencyGuard idempotencyGuard;
     private final IbankMetrics metrics;
 
-    /**
-     * 멱등성 키로 기존 거래를 조회해 replay 여부를 결정한다.
-     *
-     * - 기존 거래가 없으면 {@code Optional.empty()} (정상 처리 진행).
-     * - 기존 거래가 있고 요청 지문이 일치하면 기존 결과를 반환(진정한 중복 요청 → replay).
-     * - 기존 거래가 있으나 지문이 불일치하면 같은 키가 다른 내용에 재사용된 것이므로
-     *   {@link IdempotencyKeyConflictException}(409)로 거부한다. 옛 결과를 조용히 반환하지 않는다.
-     */
-    private Optional<TransferResponse> replayIfPresent(String idempotencyKey, String fingerprint) {
-        return transactionRepository.findByIdempotencyKey(idempotencyKey)
-                .map(tx -> {
-                    verifyFingerprint(tx, idempotencyKey, fingerprint);
-                    metrics.countIdempotentReplay();
-                    return TransferResponse.from(tx);
-                });
-    }
-
-    /** 저장된 거래의 지문과 요청 지문이 다르면 멱등성 키 충돌로 간주한다. */
-    private void verifyFingerprint(Transaction existing, String idempotencyKey, String fingerprint) {
-        if (!fingerprint.equals(existing.getRequestFingerprint())) {
-            throw new IdempotencyKeyConflictException(idempotencyKey);
-        }
-    }
+    // ------------------------------------------------------------------
+    // 이체·출금: 2단계 처리
+    // ------------------------------------------------------------------
 
     /**
-     * 이체 처리 - 비관적 락 사용.
+     * 이체.
      *
      * 소유권:     출금 계좌(fromAccount)는 반드시 요청자 본인 소유여야 한다. 타인 계좌 출금을 차단한다.
      * 데드락 방지: account_number 오름차순으로 락 획득 (전역 락 순서 고정).
-     * 멱등성:     락 획득 전 1차 검증, 락 획득 후 2차 재검증 (double-checked locking).
-     *             READ_COMMITTED에서 락 해제 후 상대 스레드가 커밋된 행을 볼 수 있음을 이용.
+     * 멱등성:     락 획득 전 1차 검증, 락 획득 후 2차 재검증. 같은 키로 재요청하면 거래의 현재 상태
+     *             (PENDING_REVIEW / HELD / COMPLETED 등)를 그대로 돌려준다.
+     *
+     * {@code Propagation.NEVER}: 바깥 트랜잭션 안에서 호출되면 세 단계가 한 트랜잭션으로 합쳐져
+     * 락을 쥔 채 판정을 기다리게 된다. 그런 호출은 예외로 막는다.
      */
     @Audited(action = "TRANSFER", target = "#request.fromAccountNumber + '→' + #request.toAccountNumber")
-    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @Transactional(propagation = Propagation.NEVER)
     public TransferResponse transfer(Long userId, TransferRequest request) {
         // 동일 계좌 이체 차단: 락/멱등성 키 소모·무의미한 거래·원장 leg 생성 전에 fail-fast
         if (request.fromAccountNumber().equals(request.toAccountNumber())) {
@@ -95,93 +105,72 @@ public class TransferService {
                 request.toAccountNumber(),
                 IdempotencyFingerprint.normalizeAmount(request.amount()));
 
-        // 1차 검증 (락 없음): 명백한 중복 요청 빠른 반환
-        Optional<TransferResponse> existing = replayIfPresent(request.idempotencyKey(), fingerprint);
-        if (existing.isPresent()) {
-            return existing.get();
+        Reservation reservation = processor.reserveTransfer(userId, request, fingerprint, Channel.MOBILE);
+        return reservation.isReplay() ? reservation.replay() : decideAndApply(reservation);
+    }
+
+    /** 출금. 이체와 같은 2단계 처리를 탄다. */
+    @Audited(action = "WITHDRAW", target = "#request.accountNumber")
+    @Transactional(propagation = Propagation.NEVER)
+    public TransferResponse withdraw(Long userId, WithdrawRequest request) {
+        transactionLimitService.validateAmount(request.amount());
+
+        String fingerprint = IdempotencyFingerprint.of(
+                Transaction.TransactionType.WITHDRAWAL.name(),
+                request.accountNumber(),
+                IdempotencyFingerprint.normalizeAmount(request.amount()));
+
+        Reservation reservation = processor.reserveWithdrawal(userId, request, fingerprint, Channel.MOBILE);
+        return reservation.isReplay() ? reservation.replay() : decideAndApply(reservation);
+    }
+
+    /** 2단계(판정)와 3단계(확정). 이 시점에 이 스레드는 락도 트랜잭션도 쥐고 있지 않다. */
+    private TransferResponse decideAndApply(Reservation reservation) {
+        Decision decision = fraudDecisionService.decide(reservation.evaluation());
+        Outcome outcome = applyWithRetry(reservation.transactionId(), decision);
+        if (outcome.failure() != null) {
+            // 거래는 FAILED로 커밋됐다. 실패 사유를 그대로 클라이언트에 전달한다.
+            throw outcome.failure();
         }
-
-        // 데드락 방지: 항상 계좌 번호 오름차순으로 락 획득
-        List<String> sorted = List.of(request.fromAccountNumber(), request.toAccountNumber())
-                .stream().sorted().toList();
-
-        Account first = accountRepository.findByAccountNumberWithLock(sorted.get(0))
-                .orElseThrow(() -> new AccountNotFoundException(sorted.get(0)));
-        Account second = accountRepository.findByAccountNumberWithLock(sorted.get(1))
-                .orElseThrow(() -> new AccountNotFoundException(sorted.get(1)));
-
-        // 2차 검증 (락 보유 상태): 동시 요청이 동일 key로 락을 대기 후 진입한 경우 방어
-        // READ_COMMITTED이므로 락 대기 중 상대 스레드가 커밋하면 이 시점에 보임
-        existing = replayIfPresent(request.idempotencyKey(), fingerprint);
-        if (existing.isPresent()) {
-            return existing.get();
-        }
-
-        Account fromAccount = first.getAccountNumber().equals(request.fromAccountNumber()) ? first : second;
-        Account toAccount   = first.getAccountNumber().equals(request.toAccountNumber())   ? first : second;
-
-        // 소유권 검증: 출금 계좌는 반드시 요청자 본인 소유여야 한다 (타인 계좌 출금 차단)
-        if (!fromAccount.getOwner().getId().equals(userId)) {
-            throw new AccountAccessDeniedException(request.fromAccountNumber());
-        }
-
-        // 1일 한도: 출금 계좌 락 보유 상태에서 검증 (동시 요청이 잔여 한도를 나눠 우회하지 못함)
-        transactionLimitService.validateDailyOutflow(fromAccount, request.amount());
-
-        // 이상거래 탐지: 락 보유 상태에서 평가 (velocity 카운트가 동시 요청에 흔들리지 않음).
-        // 룰에 걸리면 자금을 옮기지 않고 보류(HELD)하며 경보를 남긴다.
-        List<String> triggeredRules = fraudDetectionService.evaluate(
-                fromAccount, toAccount, request.amount(), java.time.LocalDateTime.now());
-        if (!triggeredRules.isEmpty()) {
-            return holdSuspiciousTransfer(request, fromAccount, toAccount, fingerprint, triggeredRules);
-        }
-
-        // 가용잔액 검증: 다른 보류 거래가 묶어 둔 금액은 이 이체로 빼 갈 수 없다 (출금 계좌 락 보유 상태)
-        holdService.requireAvailable(fromAccount, request.amount());
-        fromAccount.withdraw(request.amount());
-        toAccount.deposit(request.amount());
-
-        Transaction transaction = Transaction.builder()
-                .fromAccount(fromAccount)
-                .toAccount(toAccount)
-                .amount(request.amount())
-                .type(Transaction.TransactionType.TRANSFER)
-                .description(request.description())
-                .build()
-                .withIdempotency(request.idempotencyKey(), fingerprint);
-        transaction.complete();
-
-        transactionRepository.save(transaction);
-        // 복식부기: 출금 계좌 DEBIT + 입금 계좌 CREDIT (합이 0인 분개)
-        ledgerService.recordTransfer(transaction, fromAccount, toAccount, request.amount());
-        return TransferResponse.from(transaction);
+        return outcome.response();
     }
 
     /**
-     * 이상거래로 판정된 이체를 보류한다. 자금을 옮기지 않고 거래를 HELD로 저장하며 경보를 남긴다.
-     * 원장 항목을 만들지 않으므로(잔액 불변) 정산 불변식에 영향이 없다.
-     * 멱등성 키는 HELD 거래가 소비하므로, 같은 요청을 재시도하면 보류된 결과가 그대로 반환된다.
+     * 3단계를 실행하되, 락 대기 시간 초과나 커넥션 획득 실패 같은 일시적 실패는 몇 번 다시 시도한다.
+     *
+     * <p>1단계가 이미 커밋돼 금액이 묶여 있으므로, 여기서 포기하면 거래가 PENDING_REVIEW로 남는다.
+     * 그 경우에도 돈은 움직이지 않았고 복구 배치가 뒤에 처리하지만, 흔한 일시적 실패 때문에
+     * 고객의 돈이 묶여 있는 시간을 늘릴 이유가 없다. {@code applyDecision}은 거래 상태를 확인한 뒤에만
+     * 바꾸므로 여러 번 불러도 안전하다.
      */
-    private TransferResponse holdSuspiciousTransfer(TransferRequest request, Account fromAccount,
-                                                    Account toAccount, String fingerprint,
-                                                    List<String> triggeredRules) {
-        Transaction held = Transaction.builder()
-                .fromAccount(fromAccount)
-                .toAccount(toAccount)
-                .amount(request.amount())
-                .type(Transaction.TransactionType.TRANSFER)
-                .description(request.description())
-                .build()
-                .withIdempotency(request.idempotencyKey(), fingerprint);
-        held.hold();
-        transactionRepository.save(held);
-
-        fraudAlertRepository.save(FraudAlert.of(
-                fromAccount.getId(), held.getId(), triggeredRules, request.amount(),
-                "이상거래 탐지로 이체 보류: " + String.join(",", triggeredRules)));
-        metrics.countOperation("TRANSFER_HELD", "SUCCESS");
-        return TransferResponse.from(held);
+    private Outcome applyWithRetry(Long transactionId, Decision decision) {
+        RuntimeException last = null;
+        for (int attempt = 1; attempt <= APPLY_ATTEMPTS; attempt++) {
+            try {
+                return processor.applyDecision(transactionId, decision);
+            } catch (PessimisticLockingFailureException | CannotCreateTransactionException e) {
+                last = e;
+                log.warn("거래 확정 일시 실패 (transactionId={}, 시도 {}/{}): {}",
+                        transactionId, attempt, APPLY_ATTEMPTS, e.getClass().getSimpleName());
+                if (attempt < APPLY_ATTEMPTS) {
+                    sleep(APPLY_RETRY_BACKOFF_MS * attempt);
+                }
+            }
+        }
+        throw last;
     }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 입금: 판정 대상이 아니므로 한 트랜잭션으로 처리
+    // ------------------------------------------------------------------
 
     /**
      * HTTP 입금 — 소유권 검증 + 비관적 락.
@@ -197,9 +186,9 @@ public class TransferService {
                 request.accountNumber(),
                 IdempotencyFingerprint.normalizeAmount(request.amount()));
 
-        Optional<TransferResponse> existing = replayIfPresent(request.idempotencyKey(), fingerprint);
+        Optional<Transaction> existing = idempotencyGuard.findReplay(request.idempotencyKey(), fingerprint, userId);
         if (existing.isPresent()) {
-            return existing.get();
+            return TransferResponse.from(existing.get());
         }
 
         Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
@@ -209,9 +198,9 @@ public class TransferService {
             throw new AccountAccessDeniedException(request.accountNumber());
         }
 
-        existing = replayIfPresent(request.idempotencyKey(), fingerprint);
+        existing = idempotencyGuard.findReplay(request.idempotencyKey(), fingerprint, userId);
         if (existing.isPresent()) {
-            return existing.get();
+            return TransferResponse.from(existing.get());
         }
 
         account.deposit(request.amount());
@@ -228,59 +217,6 @@ public class TransferService {
         transactionRepository.save(transaction);
         // 복식부기: 고객 CREDIT + 클리어링 DEBIT (외부 유입 자금의 상대 leg)
         ledgerService.recordDeposit(transaction, account, request.amount());
-        return TransferResponse.from(transaction);
-    }
-
-    /**
-     * 출금 — 소유권 검증 + 비관적 락.
-     * 잔액 초과 출금 방지를 위해 반드시 비관적 락 사용.
-     */
-    @Audited(action = "WITHDRAW", target = "#request.accountNumber")
-    @Transactional(isolation = Isolation.READ_COMMITTED)
-    public TransferResponse withdraw(Long userId, WithdrawRequest request) {
-        transactionLimitService.validateAmount(request.amount());
-
-        String fingerprint = IdempotencyFingerprint.of(
-                Transaction.TransactionType.WITHDRAWAL.name(),
-                request.accountNumber(),
-                IdempotencyFingerprint.normalizeAmount(request.amount()));
-
-        Optional<TransferResponse> existing = replayIfPresent(request.idempotencyKey(), fingerprint);
-        if (existing.isPresent()) {
-            return existing.get();
-        }
-
-        Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
-                .orElseThrow(() -> new AccountNotFoundException(request.accountNumber()));
-
-        if (!account.getOwner().getId().equals(userId)) {
-            throw new AccountAccessDeniedException(request.accountNumber());
-        }
-
-        existing = replayIfPresent(request.idempotencyKey(), fingerprint);
-        if (existing.isPresent()) {
-            return existing.get();
-        }
-
-        // 1일 한도: 계좌 락 보유 상태에서 검증 (동시 요청이 잔여 한도를 나눠 우회하지 못함)
-        transactionLimitService.validateDailyOutflow(account, request.amount());
-
-        // 가용잔액 검증: 보류 거래가 묶어 둔 금액은 출금할 수 없다 (계좌 락 보유 상태)
-        holdService.requireAvailable(account, request.amount());
-        account.withdraw(request.amount());
-
-        Transaction transaction = Transaction.builder()
-                .fromAccount(account)
-                .amount(request.amount())
-                .type(Transaction.TransactionType.WITHDRAWAL)
-                .description(request.description())
-                .build()
-                .withIdempotency(request.idempotencyKey(), fingerprint);
-        transaction.complete();
-
-        transactionRepository.save(transaction);
-        // 복식부기: 고객 DEBIT + 클리어링 CREDIT (외부 유출 자금의 상대 leg)
-        ledgerService.recordWithdrawal(transaction, account, request.amount());
         return TransferResponse.from(transaction);
     }
 
@@ -310,7 +246,10 @@ public class TransferService {
 
         Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
-            verifyFingerprint(existing.get(), idempotencyKey, fingerprint);
+            // 사용자 맥락이 없는 내부 호출 경로라 소유권은 보지 않고 지문만 확인한다
+            if (!fingerprint.equals(existing.get().getRequestFingerprint())) {
+                throw new IdempotencyKeyConflictException(idempotencyKey);
+            }
             metrics.countIdempotentReplay();
             return;
         }

@@ -1,9 +1,11 @@
 package com.ibank.domain.user.entity;
 
+import com.ibank.global.security.pii.BirthDateEncryptConverter;
 import com.ibank.global.security.pii.EmailEncryptConverter;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -35,6 +37,14 @@ public class User {
     @Column(name = "email_bidx", nullable = false, unique = true, length = 64)
     private String emailBlindIndex;
 
+    /**
+     * PII: 생년월일. email과 같은 방식으로 at-rest 암호화 저장한다. 이 컬럼이 생기기 전에 가입한 고객은 null.
+     * 나이는 저장하지 않고 필요할 때 영업 타임존의 오늘을 기준으로 계산한다.
+     */
+    @Convert(converter = BirthDateEncryptConverter.class)
+    @Column(name = "birth_date", length = 128)
+    private LocalDate birthDate;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserRole role;
@@ -50,11 +60,12 @@ public class User {
     private LocalDateTime createdAt;
 
     @Builder
-    public User(String loginId, String password, String name, String email, UserRole role) {
+    public User(String loginId, String password, String name, String email, LocalDate birthDate, UserRole role) {
         this.loginId = loginId;
         this.password = password;
         this.name = name;
         this.email = email;
+        this.birthDate = birthDate;
         this.role = role;
         this.createdAt = LocalDateTime.now();
     }

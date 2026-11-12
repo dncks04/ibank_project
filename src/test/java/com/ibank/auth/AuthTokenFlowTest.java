@@ -46,7 +46,7 @@ class AuthTokenFlowTest {
     @BeforeEach
     void setUp() {
         databaseCleaner.clearAll();
-        userService.register(new RegisterRequest("authuser", "password123", "인증유저", "auth@test.com"));
+        userService.register(new RegisterRequest("authuser", "password123", "인증유저", "auth@test.com", java.time.LocalDate.of(1990, 1, 1)));
     }
 
     private LoginResponse login() {

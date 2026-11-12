@@ -47,7 +47,7 @@ class EmailPiiTest {
     @DisplayName("email은 DB에 암호문으로 저장되고(blind index 동반) 엔티티 조회 시 평문으로 복호화된다")
     void email_storedEncrypted_readDecrypted() {
         String plain = "alice@example.com";
-        userService.register(new RegisterRequest("aliceuser", "password123", "앨리스", plain));
+        userService.register(new RegisterRequest("aliceuser", "password123", "앨리스", plain, java.time.LocalDate.of(1990, 1, 1)));
 
         // DB 원본 컬럼은 평문이 아니어야 한다(at-rest 암호화)
         String rawEmail = jdbcTemplate.queryForObject(
@@ -67,10 +67,10 @@ class EmailPiiTest {
     @Test
     @DisplayName("대소문자/공백만 다른 동일 email은 blind index로 중복 탐지된다")
     void duplicateEmail_detectedViaBlindIndex_caseInsensitive() {
-        userService.register(new RegisterRequest("firstuser", "password123", "첫번째", "Bob@Example.com"));
+        userService.register(new RegisterRequest("firstuser", "password123", "첫번째", "Bob@Example.com", java.time.LocalDate.of(1990, 1, 1)));
 
         assertThatThrownBy(() -> userService.register(
-                new RegisterRequest("seconduser", "password123", "두번째", "  bob@example.com ")))
+                new RegisterRequest("seconduser", "password123", "두번째", "  bob@example.com ", java.time.LocalDate.of(1990, 1, 1))))
                 .isInstanceOf(DuplicateEmailException.class);
     }
 
@@ -78,7 +78,7 @@ class EmailPiiTest {
     @DisplayName("회원가입 응답의 email은 마스킹되어 원문이 노출되지 않는다")
     void registerResponse_masksEmail() {
         UserResponse response = userService.register(
-                new RegisterRequest("caroluser", "password123", "캐롤", "carol@example.com"));
+                new RegisterRequest("caroluser", "password123", "캐롤", "carol@example.com", java.time.LocalDate.of(1990, 1, 1)));
 
         assertThat(response.email()).isEqualTo("ca***@e******.com").doesNotContain("carol@example.com");
     }

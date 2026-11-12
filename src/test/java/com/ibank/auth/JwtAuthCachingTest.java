@@ -59,7 +59,7 @@ class JwtAuthCachingTest {
         databaseCleaner.clearAll();
         Objects.requireNonNull(cacheManager.getCache(CacheConfig.USER_DETAILS_CACHE)).clear();
         mockMvc = MockMvcBuilders.webAppContextSetup(wac).apply(springSecurity()).build();
-        userService.register(new RegisterRequest("cacheuser", "password123", "캐시", "cache@test.com"));
+        userService.register(new RegisterRequest("cacheuser", "password123", "캐시", "cache@test.com", java.time.LocalDate.of(1990, 1, 1)));
     }
 
     private String login() {

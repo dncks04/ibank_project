@@ -49,7 +49,7 @@ class AccessTokenInvalidationTest {
     void setUp() {
         databaseCleaner.clearAll();
         mockMvc = MockMvcBuilders.webAppContextSetup(wac).apply(springSecurity()).build();
-        userService.register(new RegisterRequest("invuser", "password123", "무효화", "inv@test.com"));
+        userService.register(new RegisterRequest("invuser", "password123", "무효화", "inv@test.com", java.time.LocalDate.of(1990, 1, 1)));
     }
 
     private String login() {

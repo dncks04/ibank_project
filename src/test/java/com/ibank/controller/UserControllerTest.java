@@ -66,7 +66,8 @@ class UserControllerTest {
                                   "loginId": "testuser",
                                   "password": "password123",
                                   "name": "테스터",
-                                  "email": "test@test.com"
+                                  "email": "test@test.com",
+                                  "birthDate": "1990-01-01"
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -84,7 +85,8 @@ class UserControllerTest {
                                   "loginId": "ab",
                                   "password": "password123",
                                   "name": "테스터",
-                                  "email": "test@test.com"
+                                  "email": "test@test.com",
+                                  "birthDate": "1990-01-01"
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
@@ -101,7 +103,39 @@ class UserControllerTest {
                                   "loginId": "testuser",
                                   "password": "password123",
                                   "name": "테스터",
-                                  "email": "not-an-email"
+                                  "email": "not-an-email",
+                                  "birthDate": "1990-01-01"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("회원가입 - 생년월일이 없거나 미래 날짜면 400 반환")
+    void register_validationFail_birthDate() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "loginId": "testuser",
+                                  "password": "password123",
+                                  "name": "테스터",
+                                  "email": "nobirth@test.com"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "loginId": "testuser",
+                                  "password": "password123",
+                                  "name": "테스터",
+                                  "email": "future@test.com",
+                                  "birthDate": "2999-01-01"
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
@@ -121,7 +155,8 @@ class UserControllerTest {
                                   "loginId": "testuser",
                                   "password": "password123",
                                   "name": "테스터",
-                                  "email": "test@test.com"
+                                  "email": "test@test.com",
+                                  "birthDate": "1990-01-01"
                                 }
                                 """))
                 .andExpect(status().isBadRequest())

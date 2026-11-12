@@ -58,7 +58,7 @@ class RefreshTokenRotationConcurrencyTest {
     @BeforeEach
     void setUp() {
         databaseCleaner.clearAll();
-        userService.register(new RegisterRequest("rotateuser", "password123", "회전유저", "rotate@test.com"));
+        userService.register(new RegisterRequest("rotateuser", "password123", "회전유저", "rotate@test.com", java.time.LocalDate.of(1990, 1, 1)));
     }
 
     @Test

@@ -59,6 +59,7 @@ export function setup() {
 
   const reg = http.post(`${BASE}/api/auth/register`, JSON.stringify({
     loginId, password, name: '부하테스트', email: `${loginId}@load.test`,
+    birthDate: __ENV.BIRTH_DATE || '1990-01-01',
   }), { headers: jsonHeaders() });
   if (reg.status !== 201) fail(`register 실패: ${reg.status} ${reg.body}`);
 

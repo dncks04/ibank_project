@@ -75,6 +75,13 @@ public class User {
         this.emailBlindIndex = emailBlindIndex;
     }
 
+    /**
+     * 사용자 계정의 역할.
+     *
+     * <p>서비스 간 호출의 {@code ROLE_SYSTEM}은 여기에 없다. 사용자 계정이 아니라 시스템 토큰에만 붙는 권한이어서,
+     * 이 enum에 넣으면 어떤 경로로든 사용자 계정에 그 역할이 저장될 여지가 생긴다.
+     * (정의는 {@code JwtProvider.ROLE_SYSTEM}, 부여는 {@code JwtAuthenticationFilter}의 시스템 토큰 분기뿐이다.)
+     */
     public enum UserRole {
         ROLE_USER, ROLE_ADMIN
     }

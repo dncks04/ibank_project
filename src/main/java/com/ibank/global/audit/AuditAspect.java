@@ -69,7 +69,9 @@ public class AuditAspect {
         try {
             Object result = joinPoint.proceed();
             String target = resolveTarget(audited, joinPoint, signature.getMethod(), result);
-            recordSafely(actor, audited.action(), target, SUCCESS, null, ip, requestId);
+            String detail = audited.detail().isBlank() ? null
+                    : truncate(evaluate(audited.action(), audited.detail(), joinPoint, signature.getMethod(), result));
+            recordSafely(actor, audited.action(), target, SUCCESS, detail, ip, requestId);
             return result;
         } catch (Throwable t) {
             String target = resolveTarget(audited, joinPoint, signature.getMethod(), null);
@@ -103,17 +105,22 @@ public class AuditAspect {
         if (expression == null || expression.isBlank()) {
             return truncate(firstStringArg(joinPoint.getArgs()));
         }
+        return truncate(evaluate(audited.action(), expression, joinPoint, method, result));
+    }
+
+    /** SpEL 표현식을 메서드 인자와 {@code #result}에 대해 평가한다. 실패하면 null(감사 자체는 계속 남긴다). */
+    private String evaluate(String action, String expression, ProceedingJoinPoint joinPoint, Method method,
+                            Object result) {
         try {
             EvaluationContext context = new MethodBasedEvaluationContext(
                     joinPoint.getTarget(), method, joinPoint.getArgs(), parameterNameDiscoverer);
             context.setVariable("result", result);
             Expression parsed = expressionCache.computeIfAbsent(expression, expressionParser::parseExpression);
             Object value = parsed.getValue(context);
-            return value != null ? truncate(value.toString()) : null;
+            return value != null ? value.toString() : null;
         } catch (Exception e) {
-            // 감사 대상 추출 실패가 비즈니스 흐름이나 감사 기록 자체를 막지 않도록 한다.
-            log.warn("감사 target SpEL 평가 실패 (action={}, expr={}): {}",
-                    audited.action(), expression, e.getMessage());
+            // 감사 값 추출 실패가 비즈니스 흐름이나 감사 기록 자체를 막지 않도록 한다.
+            log.warn("감사 SpEL 평가 실패 (action={}, expr={}): {}", action, expression, e.getMessage());
             return null;
         }
     }

@@ -74,6 +74,10 @@ public class Transaction {
     @Column(length = 50)
     private String failureCode;
 
+    // 보류 거래를 실행·취소할 때 호출 서비스가 보낸 사유 코드
+    @Column(length = 50)
+    private String resolutionReason;
+
     @Builder
     public Transaction(Account fromAccount, Account toAccount, BigDecimal amount,
                        TransactionType type, String description, Channel channel) {
@@ -143,6 +147,13 @@ public class Transaction {
     /** 판정 결과를 거래에 연결한다. 상태 전이와는 별개다. */
     public void recordDecision(TransactionDecision decision) {
         this.decision = decision;
+    }
+
+    /** 보류 거래의 실행·취소 사유를 남긴다. 사유가 없으면(null) 아무것도 하지 않는다. */
+    public void recordResolutionReason(String reasonCode) {
+        if (reasonCode != null) {
+            this.resolutionReason = reasonCode;
+        }
     }
 
     private void transitionTo(TransactionStatus target) {

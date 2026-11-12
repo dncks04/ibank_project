@@ -21,4 +21,11 @@ public @interface Audited {
      * 비워두면 첫 번째 String 인자를 best-effort로 사용한다.
      */
     String target() default "";
+
+    /**
+     * 성공 시 감사 로그의 detail에 남길 값을 추출하는 SpEL 표현식. target과 같은 문맥(파라미터, <code>#result</code>)을 쓴다.
+     * 비워두면 성공 감사의 detail은 비어 있다. 실패 감사의 detail은 항상 예외 종류다.
+     * 예: 보류 거래 실행·취소 사유 <code>"#reasonCode"</code>.
+     */
+    String detail() default "";
 }

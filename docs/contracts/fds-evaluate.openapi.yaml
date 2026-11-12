@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: FDS 판정 API (B 서비스 제공, ibank가 호출)
-  version: 0.1.0
+  version: 0.2.0
   description: |
     ibank(계정계)가 이체·출금 요청을 가승인(PENDING_REVIEW + 홀드)한 뒤, 실행 여부를 묻기 위해 호출한다.
 

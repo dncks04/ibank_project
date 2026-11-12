@@ -23,7 +23,7 @@ import com.ibank.domain.transaction.entity.Transaction.TransactionStatus;
 import com.ibank.domain.transaction.entity.Transaction.TransactionType;
 import com.ibank.domain.transaction.entity.TransactionDecision;
 import com.ibank.domain.transaction.exception.DailyLimitExceededException;
-import com.ibank.domain.transaction.exception.HeldTransactionNotFoundException;
+import com.ibank.domain.transaction.exception.TransactionNotFoundException;
 import com.ibank.domain.transaction.exception.TransactionLimitExceededException;
 import com.ibank.domain.transaction.exception.TransactionNotHeldException;
 import com.ibank.domain.transaction.repository.TransactionRepository;
@@ -207,7 +207,7 @@ public class TransactionProcessor {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public Outcome applyDecision(Long transactionId, Decision decision) {
         Transaction tx = transactionRepository.findByIdForUpdate(transactionId)
-                .orElseThrow(() -> new HeldTransactionNotFoundException(transactionId));
+                .orElseThrow(() -> new TransactionNotFoundException(transactionId));
         if (tx.getStatus() != TransactionStatus.PENDING_REVIEW) {
             return Outcome.of(TransferResponse.from(tx));
         }
@@ -247,10 +247,17 @@ public class TransactionProcessor {
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse executeHeld(Long transactionId) {
+        return executeHeld(transactionId, null);
+    }
+
+    /** @param reasonCode 호출 서비스가 보낸 실행 사유(없으면 null). 거래에 남긴다. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public TransferResponse executeHeld(Long transactionId, String reasonCode) {
         Transaction tx = lockHeld(transactionId);
         Settlement settlement = prepareSettlement(tx);
         settlement.revalidate();
         settlement.execute();
+        tx.recordResolutionReason(reasonCode);
         metrics.countOperation("HELD_EXECUTE", "SUCCESS");
         return TransferResponse.from(tx);
     }
@@ -262,19 +269,26 @@ public class TransactionProcessor {
      */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public TransferResponse cancelHeld(Long transactionId) {
+        return cancelHeld(transactionId, null);
+    }
+
+    /** @param reasonCode 호출 서비스가 보낸 취소 사유(없으면 null). 거래에 남긴다. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public TransferResponse cancelHeld(Long transactionId, String reasonCode) {
         Transaction tx = lockHeld(transactionId);
         AccountHold hold = holdRepository.findByTransactionId(tx.getId()).orElseThrow();
         // 홀드 해제는 계좌 락 안에서: 동시에 진행 중인 출금의 가용잔액 계산과 직렬화한다
         lockAccount(tx.getFromAccount().getId());
         holdService.release(hold);
         tx.cancel();
+        tx.recordResolutionReason(reasonCode);
         metrics.countOperation("HELD_CANCEL", "SUCCESS");
         return TransferResponse.from(tx);
     }
 
     private Transaction lockHeld(Long transactionId) {
         Transaction tx = transactionRepository.findByIdForUpdate(transactionId)
-                .orElseThrow(() -> new HeldTransactionNotFoundException(transactionId));
+                .orElseThrow(() -> new TransactionNotFoundException(transactionId));
         if (tx.getStatus() != TransactionStatus.HELD) {
             throw new TransactionNotHeldException(transactionId, tx.getStatus());
         }

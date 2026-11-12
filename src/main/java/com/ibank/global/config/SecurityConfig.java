@@ -45,13 +45,21 @@ public class SecurityConfig {
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 // 운영자 전용 API(이상거래 검토 등)는 ADMIN 권한 필요
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                // 토큰 서명 공개키: 다른 서비스가 토큰을 직접 검증할 때 쓴다. 공개키뿐이라 열어 둔다
+                .requestMatchers(HttpMethod.GET, "/.well-known/jwks.json").permitAll()
+                // 내부 API(서비스 간 호출): 시스템 토큰 발급만 열려 있고, 나머지는 ROLE_SYSTEM 토큰만 통과한다
+                .requestMatchers(HttpMethod.POST, "/internal/auth/token").permitAll()
+                .requestMatchers("/internal/**").hasRole("SYSTEM")
+                // 고객·운영자 API는 사용자 토큰만. 시스템 토큰은 인증은 되지만 여기서 403이 된다
+                // (고객 API는 요청자를 고객으로 전제하므로 서비스 계정이 들어오면 안 된다)
+                .requestMatchers("/api/**").hasAnyRole("USER", "ADMIN")
                 .anyRequest().authenticated()
             )
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, e) ->
-                    sendError(response, HttpServletResponse.SC_UNAUTHORIZED, "인증이 필요합니다."))
+                    sendError(response, HttpServletResponse.SC_UNAUTHORIZED, "인증이 필요합니다.", "UNAUTHORIZED"))
                 .accessDeniedHandler((request, response, e) ->
-                    sendError(response, HttpServletResponse.SC_FORBIDDEN, "접근 권한이 없습니다."))
+                    sendError(response, HttpServletResponse.SC_FORBIDDEN, "접근 권한이 없습니다.", "FORBIDDEN"))
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             // 호출 제한은 인증보다 먼저: 과도한 요청을 인증·DB 작업 전에 차단한다.
@@ -65,12 +73,14 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    private void sendError(HttpServletResponse response, int status, String message) throws java.io.IOException {
+    /** message와 code는 위의 상수 문자열만 들어온다(요청 값이 섞이지 않으므로 이스케이프가 필요 없다). */
+    private void sendError(HttpServletResponse response, int status, String message, String code)
+            throws java.io.IOException {
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.getWriter().write(
-            "{\"success\":false,\"data\":null,\"message\":\"" + message + "\"}"
+            "{\"success\":false,\"data\":null,\"message\":\"" + message + "\",\"code\":\"" + code + "\"}"
         );
     }
 }

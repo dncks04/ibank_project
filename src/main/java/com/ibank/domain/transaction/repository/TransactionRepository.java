@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
@@ -26,6 +27,18 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM Transaction t WHERE t.id = :id")
     Optional<Transaction> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * 가승인 뒤 오래도록 판정이 반영되지 않은(PENDING_REVIEW로 남은) 거래의 ID를 오래된 순으로 찾는다. 복구 배치용.
+     * 부분 인덱스 (created_at) WHERE PENDING_REVIEW를 탄다.
+     */
+    @Query("""
+            SELECT t.id FROM Transaction t
+            WHERE t.status = com.ibank.domain.transaction.entity.Transaction.TransactionStatus.PENDING_REVIEW
+              AND t.createdAt < :cutoff
+            ORDER BY t.createdAt
+            """)
+    List<Long> findStalePendingReviewIds(@Param("cutoff") LocalDateTime cutoff, Pageable pageable);
 
     /**
      * 기간 내에 <b>완료된</b> 출금(출금·이체의 출금 측) 금액 합계. 1일 한도 검증용.

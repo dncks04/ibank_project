@@ -62,6 +62,10 @@ dependencies {
     // ShedLock: 다중 인스턴스에서 @Scheduled 배치가 동시에 중복 실행되지 않도록 분산 락 (DB 기반)
     implementation("net.javacrumbs.shedlock:shedlock-spring:7.7.0")
     implementation("net.javacrumbs.shedlock:shedlock-provider-jdbc-template:7.7.0")
+
+    // 서킷 브레이커: FDS 판정 호출 보호. Spring Boot 통합 모듈(resilience4j-spring-boot3)은 Boot 4 지원이
+    // 확인되지 않아 쓰지 않고, 프레임워크 의존이 없는 코어 모듈만 넣어 코드로 직접 구성한다.
+    implementation("io.github.resilience4j:resilience4j-circuitbreaker:2.3.0")
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
     testImplementation("org.springframework.boot:spring-boot-starter-test")

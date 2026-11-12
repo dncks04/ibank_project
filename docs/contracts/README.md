@@ -31,6 +31,7 @@ B → ibank     POST /internal/transactions/{id}/cancel    → CANCELLED
 1. **`/fds/evaluate`는 같은 `transactionId`로 다시 호출될 수 있다.** ibank가 판정 직후 죽으면 복구 배치가 재판정한다.
 2. **FDS가 느리거나 죽으면 ibank가 대신 판정한다.** 65세 이상(또는 나이 미상)은 HOLD, 그 외는 APPROVE.
    이때 이벤트의 `decision.decisionSource`가 `FALLBACK`이고 `decisionId`는 null이다.
+   대체 정책이 보류한 거래의 사유 코드는 `FDS_UNAVAILABLE` 하나다.
    B는 FALLBACK으로 HELD된 거래를 이벤트로 보고 뒤늦게 판단해 실행·취소할 수 있다.
 3. **이벤트는 at-least-once다.** `id`로 중복을 제거한다. 모르는 `eventType`은 건너뛴다.
 4. **이벤트 전달은 지연될 수 있다.** ibank DB에 오래 열린 트랜잭션이 있으면 그 뒤 이벤트는 그 트랜잭션이 끝난 뒤에 보인다.

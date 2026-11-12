@@ -170,6 +170,26 @@ public class TransactionProcessor {
                 businessClock.toBusinessOffset(tx.getCreatedAt())));
     }
 
+    /**
+     * 판정 대기 중인 거래의 판정 요청을 다시 만든다. 판정 도중 처리가 끊긴 거래를 복구 배치가 재판정할 때 쓴다.
+     * 거래가 이미 PENDING_REVIEW가 아니면(그사이 다른 경로가 처리함) 빈 값.
+     */
+    @Transactional(readOnly = true)
+    public Optional<EvaluationRequest> evaluationRequestOf(Long transactionId) {
+        return transactionRepository.findById(transactionId)
+                .filter(tx -> tx.getStatus() == TransactionStatus.PENDING_REVIEW)
+                .map(tx -> new EvaluationRequest(
+                        tx.getId(),
+                        tx.getIdempotencyKey(),
+                        tx.getType(),
+                        tx.getChannel(),
+                        tx.getFromAccount().getAccountNumber(),
+                        tx.getToAccount() != null ? tx.getToAccount().getAccountNumber() : null,
+                        tx.getAmount(),
+                        tx.getFromAccount().getOwner().getId(),
+                        businessClock.toBusinessOffset(tx.getCreatedAt())));
+    }
+
     // ------------------------------------------------------------------
     // 3단계: 판정 반영
     // ------------------------------------------------------------------

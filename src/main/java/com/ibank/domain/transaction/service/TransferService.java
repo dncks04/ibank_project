@@ -126,6 +126,27 @@ public class TransferService {
         return reservation.isReplay() ? reservation.replay() : decideAndApply(reservation);
     }
 
+    /**
+     * 창구 출금. 창구 직원이 고객 계좌에서 현금을 출금한다(호출 경로는 ROLE_TELLER로 보호된다).
+     * 고객 출금과 같은 2단계 처리를 타고 채널만 TELLER로 기록된다. 지문에 채널을 넣어, 고객이 앱에서 쓴 키와
+     * 같은 키가 창구에서 들어오면 같은 요청으로 보지 않고 충돌로 거부한다.
+     * 감사 로그의 actor는 처리한 직원이다.
+     */
+    @Audited(action = "TELLER_WITHDRAW", target = "#request.accountNumber")
+    @Transactional(propagation = Propagation.NEVER)
+    public TransferResponse withdrawAtTeller(WithdrawRequest request) {
+        transactionLimitService.validateAmount(request.amount());
+
+        String fingerprint = IdempotencyFingerprint.of(
+                Transaction.TransactionType.WITHDRAWAL.name(),
+                Channel.TELLER.name(),
+                request.accountNumber(),
+                IdempotencyFingerprint.normalizeAmount(request.amount()));
+
+        Reservation reservation = processor.reserveTellerWithdrawal(request, fingerprint);
+        return reservation.isReplay() ? reservation.replay() : decideAndApply(reservation);
+    }
+
     /** 2단계(판정)와 3단계(확정). 이 시점에 이 스레드는 락도 트랜잭션도 쥐고 있지 않다. */
     private TransferResponse decideAndApply(Reservation reservation) {
         Decision decision = fraudDecisionService.decide(reservation.evaluation());

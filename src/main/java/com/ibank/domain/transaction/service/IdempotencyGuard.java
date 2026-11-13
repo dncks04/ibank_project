@@ -31,6 +31,21 @@ public class IdempotencyGuard {
     private final TransactionRepository transactionRepository;
     private final IbankMetrics metrics;
 
+    /**
+     * 직원(창구) 요청의 멱등성 검증. 직원은 고객 계좌를 대신 처리하므로 계좌 소유권은 보지 않고 지문만 확인한다.
+     * 호출 경로가 직원 권한으로 보호돼 있어야 한다.
+     */
+    public Optional<Transaction> findReplayForStaff(String idempotencyKey, String fingerprint) {
+        Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
+        existing.ifPresent(tx -> {
+            if (!fingerprint.equals(tx.getRequestFingerprint())) {
+                throw new IdempotencyKeyConflictException(idempotencyKey);
+            }
+            metrics.countIdempotentReplay();
+        });
+        return existing;
+    }
+
     public Optional<Transaction> findReplay(String idempotencyKey, String fingerprint, Long requesterUserId) {
         Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
         existing.ifPresent(tx -> {

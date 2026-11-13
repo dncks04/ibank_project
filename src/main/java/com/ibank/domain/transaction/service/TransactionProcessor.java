@@ -117,10 +117,24 @@ public class TransactionProcessor {
         return reserve(tx, from, request.fromAccountNumber(), request.toAccountNumber());
     }
 
-    /** 출금 가승인. */
+    /** 출금 가승인 (고객 본인). 계좌는 요청자 소유여야 한다. */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public Reservation reserveWithdrawal(Long userId, WithdrawRequest request, String fingerprint, Channel channel) {
-        Optional<Transaction> existing = idempotencyGuard.findReplay(request.idempotencyKey(), fingerprint, userId);
+        return reserveWithdrawal(Requester.customer(userId), request, fingerprint, channel);
+    }
+
+    /**
+     * 창구 출금 가승인. 창구 직원이 고객 계좌에서 출금하므로 계좌 소유권 대신 직원 권한(ROLE_TELLER, 진입점에서 검사)으로
+     * 처리한다. 나머지 검증(계좌 상태, 한도, 가용잔액)과 판정 흐름은 고객 출금과 같다.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public Reservation reserveTellerWithdrawal(WithdrawRequest request, String fingerprint) {
+        return reserveWithdrawal(Requester.ofStaff(), request, fingerprint, Channel.TELLER);
+    }
+
+    private Reservation reserveWithdrawal(Requester requester, WithdrawRequest request, String fingerprint,
+                                          Channel channel) {
+        Optional<Transaction> existing = findReplay(requester, request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return Reservation.replay(TransferResponse.from(existing.get()));
         }
@@ -128,12 +142,14 @@ public class TransactionProcessor {
         Account account = accountRepository.findByAccountNumberWithLock(request.accountNumber())
                 .orElseThrow(() -> new AccountNotFoundException(request.accountNumber()));
 
-        existing = idempotencyGuard.findReplay(request.idempotencyKey(), fingerprint, userId);
+        existing = findReplay(requester, request.idempotencyKey(), fingerprint);
         if (existing.isPresent()) {
             return Reservation.replay(TransferResponse.from(existing.get()));
         }
 
-        requireOwner(account, userId, request.accountNumber());
+        if (!requester.isStaff()) {
+            requireOwner(account, requester.userId(), request.accountNumber());
+        }
         account.ensureCanSend();
         limitService.validateDailyOutflow(account, request.amount(), null);
 
@@ -417,7 +433,31 @@ public class TransactionProcessor {
         return "INSUFFICIENT_AVAILABLE_BALANCE";
     }
 
+    private Optional<Transaction> findReplay(Requester requester, String idempotencyKey, String fingerprint) {
+        return requester.isStaff()
+                ? idempotencyGuard.findReplayForStaff(idempotencyKey, fingerprint)
+                : idempotencyGuard.findReplay(idempotencyKey, fingerprint, requester.userId());
+    }
+
     private record LockedPair(Account from, Account to) {}
+
+    /**
+     * 요청 주체. 고객이면 계좌 소유권을 확인하고, 직원이면 확인하지 않는다.
+     * userId가 null인 것으로 직원을 나타내지 않고 따로 표시한다 — 고객 경로에서 실수로 null이 넘어와
+     * 소유권 검사가 조용히 빠지는 일을 막기 위함이다.
+     */
+    private record Requester(Long userId, boolean isStaff) {
+        static Requester customer(Long userId) {
+            if (userId == null) {
+                throw new IllegalArgumentException("고객 요청에는 사용자 ID가 필요합니다.");
+            }
+            return new Requester(userId, false);
+        }
+
+        static Requester ofStaff() {
+            return new Requester(null, true);
+        }
+    }
 
     /**
      * 1단계 결과. replay면 기존 거래의 응답이, 새로 가승인했으면 판정 요청이 들어 있다.

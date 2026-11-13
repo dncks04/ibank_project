@@ -83,6 +83,11 @@ public class User {
      * (정의는 {@code JwtProvider.ROLE_SYSTEM}, 부여는 {@code JwtAuthenticationFilter}의 시스템 토큰 분기뿐이다.)
      */
     public enum UserRole {
-        ROLE_USER, ROLE_ADMIN
+        /** 고객 */
+        ROLE_USER,
+        /** 운영자 */
+        ROLE_ADMIN,
+        /** 창구 직원. 고객 계좌의 창구 거래를 대신 처리한다(/api/teller/**). 설정으로만 만들 수 있다. */
+        ROLE_TELLER
     }
 }

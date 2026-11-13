@@ -52,6 +52,8 @@ public class SecurityConfig {
                 .requestMatchers("/internal/**").hasRole("SYSTEM")
                 // 고객·운영자 API는 사용자 토큰만. 시스템 토큰은 인증은 되지만 여기서 403이 된다
                 // (고객 API는 요청자를 고객으로 전제하므로 서비스 계정이 들어오면 안 된다)
+                // 창구 API는 창구 직원만. 직원은 고객 API를 쓰지 못한다(고객 API는 요청자를 계좌 주인으로 전제한다)
+                .requestMatchers("/api/teller/**").hasRole("TELLER")
                 .requestMatchers("/api/**").hasAnyRole("USER", "ADMIN")
                 .anyRequest().authenticated()
             )

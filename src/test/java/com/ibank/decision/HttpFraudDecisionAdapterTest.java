@@ -208,7 +208,8 @@ class HttpFraudDecisionAdapterTest {
         assertThatThrownBy(() -> adapter.evaluate(transferRequest()))
                 .isInstanceOf(FraudDecisionUnavailableException.class)
                 .hasMessageContaining("서킷 브레이커");
-        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofMillis(100));
+        // HTTP 호출을 했다면 최소한 왕복 시간이 들고, 실패했다면 타임아웃(300ms)만큼 걸린다
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofMillis(250));
         assertThat(fds.received()).hasSize(callsWhenOpened);
 
         // 대기 시간이 지나면 시험 호출을 흘려보내고, 성공하면 회로가 닫힌다

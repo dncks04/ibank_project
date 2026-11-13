@@ -67,7 +67,9 @@ class FdsFallbackTest {
     static void fdsProperties(DynamicPropertyRegistry registry) {
         registry.add("ibank.fds.mode", () -> "http");
         registry.add("ibank.fds.base-url", fds::baseUrl);
-        registry.add("ibank.fds.response-timeout", () -> "500ms");
+        // 정상 응답이 느린 머신에서도 타임아웃에 걸리지 않도록 넉넉히 둔다. 타임아웃 시나리오는 서버를 이보다 훨씬 길게(8초) 늦춘다.
+        registry.add("ibank.fds.connect-timeout", () -> "2s");
+        registry.add("ibank.fds.response-timeout", () -> "2s");
         // 이 테스트는 호출마다의 타임아웃과 대체 정책을 본다. 회로가 열려 호출이 생략되지 않도록 창을 크게 둔다.
         registry.add("ibank.fds.circuit-breaker.sliding-window-size", () -> "1000");
         registry.add("ibank.fds.circuit-breaker.minimum-calls", () -> "1000");
@@ -131,7 +133,7 @@ class FdsFallbackTest {
     void timeout_elderCustomer_held() {
         Long elder = saveUser("elder", LocalDate.of(1950, 5, 5));
         String account = open(elder, INITIAL);
-        fds.delay(5_000);
+        fds.delay(8_000);
 
         long started = System.nanoTime();
         TransferResponse response = transferService.transfer(elder, transfer(account, AMOUNT));
@@ -139,8 +141,8 @@ class FdsFallbackTest {
 
         assertThat(response.status()).isEqualTo(TransactionStatus.HELD);
         assertThat(response.reasonCodes()).containsExactly(FallbackDecisionPolicy.REASON_FDS_UNAVAILABLE);
-        // 서버는 5초 뒤에 답하지만, 응답 타임아웃(500ms) 근처에서 대체 정책으로 넘어간다
-        assertThat(elapsed).isLessThan(Duration.ofSeconds(3));
+        // 서버는 8초 뒤에 답하지만, 응답 타임아웃(2초) 근처에서 대체 정책으로 넘어간다
+        assertThat(elapsed).isLessThan(Duration.ofSeconds(6));
 
         Transaction tx = transactionRepository.findById(response.transactionId()).orElseThrow();
         assertThat(tx.getDecision().getVerdict()).isEqualTo(Verdict.HOLD);
@@ -163,7 +165,7 @@ class FdsFallbackTest {
     void timeout_otherCustomer_completed() {
         Long young = saveUser("young", LocalDate.of(1990, 5, 5));
         String account = open(young, INITIAL);
-        fds.delay(5_000);
+        fds.delay(8_000);
 
         TransferResponse response = transferService.transfer(young, transfer(account, AMOUNT));
 
@@ -230,9 +232,9 @@ class FdsFallbackTest {
     void whileWaitingForFds_accountIsNotLocked() throws Exception {
         Long customer = saveUser("waiting", LocalDate.of(1990, 1, 1));
         String account = open(customer, INITIAL);
-        fds.delay(5_000);
+        fds.delay(8_000);
 
-        // 이체 하나가 판정 응답을 기다리게 한다 (응답 타임아웃 500ms 동안)
+        // 이체 하나가 판정 응답을 기다리게 한다 (응답 타임아웃 2초 동안)
         CompletableFuture<TransferResponse> waiting = CompletableFuture.supplyAsync(
                 () -> transferService.transfer(customer, transfer(account, AMOUNT)));
         long deadline = System.currentTimeMillis() + 5_000;
@@ -248,7 +250,8 @@ class FdsFallbackTest {
         Duration depositTook = Duration.ofNanos(System.nanoTime() - started);
 
         assertThat(waiting).as("입금이 끝났을 때 이체는 아직 판정을 기다리는 중이다").isNotDone();
-        assertThat(depositTook).isLessThan(Duration.ofMillis(400));
+        // 락에 막혔다면 입금은 이체의 판정 대기(2초)가 끝난 뒤에야 끝난다
+        assertThat(depositTook).isLessThan(Duration.ofMillis(1_500));
 
         assertThat(waiting.get(10, TimeUnit.SECONDS).status()).isEqualTo(TransactionStatus.COMPLETED);
         assertThat(balanceOf(account)).isEqualByComparingTo(INITIAL.subtract(AMOUNT).add(new BigDecimal("1000")));

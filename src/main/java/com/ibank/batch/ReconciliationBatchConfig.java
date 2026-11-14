@@ -5,6 +5,7 @@ import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.ledger.dto.AccountLedgerBalance;
 import com.ibank.domain.ledger.entity.ReconciliationResult;
 import com.ibank.domain.ledger.repository.ReconciliationResultRepository;
+import com.ibank.domain.ledger.service.IntegrityCheckService;
 import com.ibank.domain.ledger.service.ReconciliationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.configuration.annotation.StepScope;
@@ -25,7 +26,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.PlatformTransactionManager;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -34,8 +34,10 @@ import java.util.Map;
  *
  * 1. 계좌별 스텝(청크 지향): 계좌(reader) → 잔액 vs 원장 합계 비교(processor) → 결과 저장(writer).
  *    불변식 {@code balance == SUM(CREDIT) - SUM(DEBIT)} 위반 계좌를 찾아 reconciliation_results에 남긴다.
- * 2. 시스템 전체 스텝(tasklet): 복식부기 검증 — 모든 분개(journal)의 합이 0인지, 전 원장 시산표가 0인지.
- *    위반 시 잡을 FAILED로 종료해 자금 보존 위반을 시끄럽게 표면화한다.
+ * 2. 시스템 전체 스텝(tasklet): 계좌 단위가 아닌 검증({@link IntegrityCheckService}) —
+ *    복식부기(모든 분개의 합 0, 전 원장 시산표 0)와 홀드 불변식(홀드 합계 ≤ 잔액, 홀드와 거래 상태의 짝,
+ *    실행되지 않은 거래에 분개 없음). 항목별 결과를 reconciliation_check_results에 남기고,
+ *    하나라도 위반이면 잡을 FAILED로 종료해 시끄럽게 표면화한다.
  */
 @Configuration
 @RequiredArgsConstructor
@@ -46,6 +48,7 @@ public class ReconciliationBatchConfig {
     private final AccountRepository accountRepository;
     private final ReconciliationResultRepository reconciliationResultRepository;
     private final ReconciliationService reconciliationService;
+    private final IntegrityCheckService integrityCheckService;
 
     @Bean
     public RepositoryItemReader<Account> reconciliationReader() {
@@ -94,19 +97,25 @@ public class ReconciliationBatchConfig {
     }
 
     /**
-     * 복식부기 검증 스텝. 계좌별 검사로는 잡지 못하는 자금 보존 위반
-     * (잔액과 원장이 함께 잘못된 경우)을 분개 zero-sum + 시산표로 탐지한다.
+     * 시스템 전체 검증 스텝. 계좌별 검사로는 잡지 못하는 자금 보존 위반(잔액과 원장이 함께 잘못된 경우)을
+     * 분개 zero-sum + 시산표로, 홀드와 거래 상태가 어긋난 경우를 홀드 검증으로 탐지한다.
      */
     @Bean
     public Step ledgerIntegrityStep(JobRepository jobRepository,
                                     PlatformTransactionManager transactionManager) {
         return new StepBuilder("ledgerIntegrityStep", jobRepository)
                 .tasklet((contribution, chunkContext) -> {
-                    List<String> unbalanced = reconciliationService.findUnbalancedJournals();
-                    BigDecimal trialBalance = reconciliationService.trialBalance();
-                    if (!unbalanced.isEmpty() || trialBalance.signum() != 0) {
-                        throw new IllegalStateException(
-                                "복식부기 위반: 불균형 분개 %d건, 시산표 합계 %s".formatted(unbalanced.size(), trialBalance));
+                    Long jobExecutionId = chunkContext.getStepContext().getStepExecution().getJobExecutionId();
+                    List<IntegrityCheckService.CheckResult> results = integrityCheckService.runAll();
+                    // 결과는 별도 트랜잭션으로 저장한다 — 아래에서 예외를 던져 이 스텝이 롤백되어도 남는다
+                    integrityCheckService.record(jobExecutionId, results);
+
+                    List<String> violated = results.stream()
+                            .filter(result -> !result.consistent())
+                            .map(result -> result.checkName() + "(" + result.violations() + "건)")
+                            .toList();
+                    if (!violated.isEmpty()) {
+                        throw new IllegalStateException("정산 검증 위반: " + String.join(", ", violated));
                     }
                     return RepeatStatus.FINISHED;
                 }, transactionManager)

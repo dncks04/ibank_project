@@ -47,6 +47,23 @@ services:
       # Redis: 분산 rate limit + 인증 캐시 무효화 전파
       IBANK_REDIS_ENABLED: "true"
       SPRING_DATA_REDIS_HOST: redis
+      # FDS 서비스 연동. 기본은 FDS 서비스 없이 ibank만 띄우는 always-approve.
+      # 팀 환경에서는 .env에 FDS_MODE=http, FDS_BASE_URL=http://<fds 호스트>:<포트> 를 넣는다.
+      IBANK_FDS_MODE: ${FDS_MODE:-always-approve}
+      IBANK_FDS_BASE_URL: ${FDS_BASE_URL:-}
+      IBANK_FDS_API_TOKEN: ${FDS_API_TOKEN:-}
+      # 판정 대기 거래 복구, 홀드 만료, Outbox 정리 스케줄러 (ShedLock으로 인스턴스 간 중복 실행 차단)
+      IBANK_FDS_RECOVERY_ENABLED: "true"
+      IBANK_HOLDS_EXPIRY_ENABLED: "true"
+      IBANK_OUTBOX_CLEANUP_ENABLED: "true"
+      # 키 이름에 '-'가 들어가는 맵 설정(내부 API 클라이언트, 직원 계정)은 환경변수 이름으로 표현이 안 돼 JSON으로 넘긴다.
+      #   fds-service : FDS 서비스가 POST /internal/auth/token 에 보낼 클라이언트 ID와 시크릿
+      #   teller01    : 창구 직원 계정 (회원가입 API로는 직원 계정을 만들 수 없다)
+      # JWT 서명 키(JWT_PRIVATE_KEY)를 주지 않으면 기동할 때마다 임시 키를 만든다. 로컬 전용.
+      SPRING_APPLICATION_JSON: >-
+        {"ibank":{"internal":{"clients":{"fds-service":"${FDS_SERVICE_CLIENT_SECRET:-local-fds-secret}"}},
+        "bootstrap":{"staff":{"teller01":{"password":"${TELLER_PASSWORD:-teller-pass-1234}","role":"ROLE_TELLER","name":"창구직원"}}}}}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
     ports:
       - "8080:8080"
     healthcheck:

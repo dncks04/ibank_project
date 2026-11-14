@@ -10,4 +10,9 @@ public class InactiveAccountException extends BusinessException {
     public InactiveAccountException() {
         super(HttpStatus.CONFLICT, "비활성 상태인 계좌입니다.");
     }
+
+    /** 하위 타입(지급정지 등)이 자기 메시지를 쓸 때. */
+    protected InactiveAccountException(String clientMessage, String logMessage) {
+        super(HttpStatus.CONFLICT, clientMessage, logMessage);
+    }
 }

@@ -3,6 +3,7 @@ package com.ibank.domain.transaction.service;
 import com.ibank.domain.account.entity.Account;
 import com.ibank.domain.account.entity.InsufficientBalanceException;
 import com.ibank.domain.account.exception.AccountNotFoundException;
+import com.ibank.domain.account.exception.AccountFrozenException;
 import com.ibank.domain.account.exception.InactiveAccountException;
 import com.ibank.domain.account.repository.AccountRepository;
 import com.ibank.domain.account.service.AccountAccessDeniedException;
@@ -421,6 +422,9 @@ public class TransactionProcessor {
     }
 
     private static String failureCodeOf(RuntimeException e) {
+        if (e instanceof AccountFrozenException) {
+            return "ACCOUNT_FROZEN"; // InactiveAccountException의 하위 타입이라 먼저 확인한다
+        }
         if (e instanceof InactiveAccountException) {
             return "ACCOUNT_NOT_ACTIVE";
         }

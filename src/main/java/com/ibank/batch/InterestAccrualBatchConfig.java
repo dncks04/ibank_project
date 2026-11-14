@@ -66,8 +66,9 @@ public class InterestAccrualBatchConfig {
         BigDecimal annualRate = interestProperties.annualRate();
         BigDecimal basis = BigDecimal.valueOf(interestProperties.dayCountBasis());
         return account -> {
-            if (account.getStatus() != Account.AccountStatus.ACTIVE) {
-                return null; // 정지/해지 계좌는 적립 대상 아님
+            if (account.getStatus() != Account.AccountStatus.ACTIVE
+                    && account.getStatus() != Account.AccountStatus.FROZEN) {
+                return null; // 해지 계좌는 적립 대상 아님. 지급정지는 출금만 막는 것이라 이자는 계속 붙는다
             }
             if (account.isTimeDeposit()) {
                 return null; // 정기예금 이자는 약정 금리로 해지 때 한 번에 지급한다 (일일 적립 대상 아님)

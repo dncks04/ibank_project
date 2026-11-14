@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: ibank 내부 API (ibank 제공, B 서비스가 호출)
-  version: 0.2.0
+  version: 0.3.0
   description: |
     계정계(ibank)가 FDS·보호 흐름 서비스(B)에 제공하는 내부 API.
 
@@ -17,7 +17,7 @@ info:
     - 모든 호출은 감사 로그에 남는다(actor = 토큰의 클라이언트 ID).
 
     ## 구현 단계
-    각 경로의 `x-ibank-stage`는 구현되는 작업 단계다. `planned`는 1순위 확장으로, 명세가 바뀔 수 있다.
+    각 경로의 `x-ibank-stage`는 그 경로가 구현된 작업 단계다(0.3.0 기준 모두 구현됨).
 servers:
   - url: http://ibank:8080
 security:
@@ -305,8 +305,17 @@ paths:
     post:
       tags: [accounts]
       summary: 계좌 지급정지
-      x-ibank-stage: planned (2-6)
-      description: FROZEN 계좌는 출금·이체 출금이 불가하고 입금은 허용된다. 지급정지 시점의 ACTIVE 홀드는 유지된다.
+      x-ibank-stage: 2-6
+      description: |
+        FROZEN 계좌는 돈이 나가는 것만 막힌다: 출금·이체 출금·정기예금 가입 자금 출금이 불가하고,
+        입금·이체 입금·이자 적립은 허용된다. 지급정지 시점의 ACTIVE 홀드는 유지된다.
+
+        - 정지 중인 계좌의 HELD 거래를 실행하면 422 `ACCOUNT_FROZEN`(거래는 HELD 유지). 취소는 가능하다.
+        - 판정 대기 중(PENDING_REVIEW)에 정지되면, 승인 판정이 와도 실행 재검증에서 걸려
+          거래는 FAILED(`failureCode=ACCOUNT_FROZEN`)가 된다.
+        - 이미 FROZEN인 계좌에 새 키로 다시 요청하면 그대로 성공한다. 이벤트는 다시 나가지 않고 처음 사유를 유지한다.
+        - 해지된 계좌는 422 `ACCOUNT_NOT_ACTIVE`.
+        - 같은 키에 다른 계좌·다른 reasonCode·다른 동작이면 409 `IDEMPOTENCY_KEY_CONFLICT`.
       parameters:
         - $ref: '#/components/parameters/AccountNumber'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -319,16 +328,29 @@ paths:
       responses:
         '200':
           description: 지급정지됨(이미 FROZEN이면 그대로 성공)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/AccountStatus'
+        '400':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
+          $ref: '#/components/responses/Error'
+        '422':
           $ref: '#/components/responses/Error'
 
   /internal/accounts/{accountNumber}/unfreeze:
     post:
       tags: [accounts]
       summary: 계좌 지급정지 해제
-      x-ibank-stage: planned (2-6)
+      x-ibank-stage: 2-6
+      description: 이미 ACTIVE인 계좌면 그대로 성공하고 이벤트는 나가지 않는다. 해지된 계좌는 422 `ACCOUNT_NOT_ACTIVE`.
       parameters:
         - $ref: '#/components/parameters/AccountNumber'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -341,9 +363,21 @@ paths:
       responses:
         '200':
           description: 해제됨(이미 ACTIVE면 그대로 성공)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/AccountStatus'
+        '400':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '409':
+          $ref: '#/components/responses/Error'
+        '422':
           $ref: '#/components/responses/Error'
 
 components:
@@ -396,7 +430,8 @@ components:
         | 422 | `INSUFFICIENT_AVAILABLE_BALANCE` | 실행 재검증 실패: 가용잔액 부족. 거래는 HELD 유지 |
         | 422 | `DAILY_LIMIT_EXCEEDED` | 실행 재검증 실패: 1일 한도 초과. 거래는 HELD 유지 |
         | 422 | `PER_TRANSACTION_LIMIT_EXCEEDED` | 실행 재검증 실패: 단건 한도 초과. 거래는 HELD 유지 |
-        | 422 | `ACCOUNT_NOT_ACTIVE` | 실행 재검증 실패: 출금·입금 계좌가 해지·정지됨. 거래는 HELD 유지 |
+        | 422 | `ACCOUNT_FROZEN` | 실행 재검증 실패: 출금 계좌가 지급정지됨. 거래는 HELD 유지(해제 후 다시 실행하거나 취소) |
+        | 422 | `ACCOUNT_NOT_ACTIVE` | 실행 재검증 실패: 출금·입금 계좌가 해지됨. 거래는 HELD 유지. 지급정지·해제 대상이 해지된 계좌일 때도 이 코드 |
         | 503 | `TEMPORARILY_UNAVAILABLE` | 락 대기 시간 초과 등. 같은 키로 재시도 가능 |
         | 500 | `INTERNAL_ERROR` | 예기치 못한 오류. 같은 키로 재시도 가능 |
       content:
@@ -482,7 +517,7 @@ components:
           nullable: true
           description: |
             status=FAILED일 때만. 승인 판정 뒤 실행 시점 재검증에 실패한 이유
-            (`ACCOUNT_NOT_ACTIVE`, `DAILY_LIMIT_EXCEEDED`, `PER_TRANSACTION_LIMIT_EXCEEDED`, `INSUFFICIENT_AVAILABLE_BALANCE`),
+            (`ACCOUNT_FROZEN`, `ACCOUNT_NOT_ACTIVE`, `DAILY_LIMIT_EXCEEDED`, `PER_TRANSACTION_LIMIT_EXCEEDED`, `INSUFFICIENT_AVAILABLE_BALANCE`),
             또는 판정이 끝내 반영되지 않은 채 최대 보류 시간이 지난 경우(`HOLD_EXPIRED`).
         resolutionReasonCode:
           type: string
@@ -506,6 +541,19 @@ components:
           type: string
           maxLength: 50
           pattern: '^[A-Z0-9_]+$'
+          description: 정지·해제 사유(예 SCAM_SUSPECTED, GUARDIAN_REQUEST). 감사 로그와 이벤트에 실린다.
+    AccountStatus:
+      type: object
+      required: [accountNumber, status]
+      properties:
+        accountNumber: { type: string }
+        status:
+          type: string
+          enum: [ACTIVE, FROZEN]
+        reasonCode:
+          type: string
+          nullable: true
+          description: 지급정지 사유. FROZEN일 때는 처음 정지시킨 요청의 사유, ACTIVE면 null.
     CustomerProfile:
       type: object
       required: [customerId, joinedAt, accounts]
@@ -526,7 +574,6 @@ components:
               accountType:
                 type: string
                 enum: [DEMAND, TIME_DEPOSIT]
-                description: 2-1 구현 전에는 항상 DEMAND.
               status:
                 type: string
                 enum: [ACTIVE, FROZEN, SUSPENDED, CLOSED]
@@ -571,7 +618,6 @@ components:
             - ACCOUNT_FROZEN
             - ACCOUNT_UNFROZEN
           description: |
-            `TIME_DEPOSIT_TERMINATED`, `ACCOUNT_FROZEN`, `ACCOUNT_UNFROZEN`은 1순위 확장에서 추가된다.
             B는 모르는 eventType을 오류로 처리하지 말고 건너뛸 것(이후 종류가 늘어날 수 있다).
         aggregateId:
           type: string

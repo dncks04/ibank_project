@@ -59,3 +59,4 @@ B → ibank     POST /internal/transactions/{id}/cancel    → CANCELLED
 |---|---|---|
 | 0.1.0 | 2026-11-11 | 초안. 구현 전 작성 |
 | 0.2.0 | 2026-11-12 | `decisionSource`에 `LOCAL` 추가. FDS 응답 해석 규칙·서킷 브레이커·대체 정책 사유 코드(`FDS_UNAVAILABLE`) 명시. 거래 상태에 `failureCode`·`resolutionReasonCode` 추가. 오류 코드 `INTERNAL_ERROR` 추가. 토큰 발급 잠금 규칙 명시 |
+| 0.3.0 | 2026-11-14 | 1순위 확장 반영. 지급정지·해제 API 구현(응답 `{accountNumber, status, reasonCode}`, 오류 코드 `ACCOUNT_FROZEN`). 거래 유형 `TD_OPEN`·`TD_TERMINATION`, 채널 `TELLER`, `failureCode=HOLD_EXPIRED`, 이벤트 `TIME_DEPOSIT_TERMINATED`·`ACCOUNT_FROZEN`·`ACCOUNT_UNFROZEN` |

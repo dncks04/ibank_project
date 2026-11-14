@@ -2,6 +2,7 @@ package com.ibank.internal.web;
 
 import com.ibank.domain.account.entity.InsufficientBalanceException;
 import com.ibank.domain.account.exception.AccountNotFoundException;
+import com.ibank.domain.account.exception.AccountFrozenException;
 import com.ibank.domain.account.exception.InactiveAccountException;
 import com.ibank.domain.transaction.exception.DailyLimitExceededException;
 import com.ibank.domain.transaction.exception.TransactionLimitExceededException;
@@ -122,6 +123,11 @@ public class InternalApiExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> perTransactionLimit(TransactionLimitExceededException e) {
         log.warn("내부 API 재검증 실패: {}", e.getMessage());
         return error(HttpStatus.UNPROCESSABLE_CONTENT, "PER_TRANSACTION_LIMIT_EXCEEDED", e.getClientMessage());
+    }
+
+    @ExceptionHandler(AccountFrozenException.class)
+    public ResponseEntity<ApiResponse<Void>> frozenAccount(AccountFrozenException e) {
+        return error(HttpStatus.UNPROCESSABLE_CONTENT, "ACCOUNT_FROZEN", e.getClientMessage());
     }
 
     @ExceptionHandler(InactiveAccountException.class)

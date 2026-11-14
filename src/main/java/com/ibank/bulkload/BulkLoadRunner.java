@@ -39,10 +39,16 @@ public class BulkLoadRunner implements ApplicationRunner {
         if (properties.inputDir() == null || properties.inputDir().isBlank()) {
             throw new IllegalStateException("bulk-load 프로파일에는 ibank.bulk-load.input-dir이 필요합니다.");
         }
-        BulkLoadService.Summary summary = service.load(Path.of(properties.inputDir()));
+        int code;
+        try {
+            code = service.load(Path.of(properties.inputDir())).consistent() ? 0 : 1;
+        } catch (BulkLoadService.AlreadyLoadedException e) {
+            log.warn(e.getMessage()); // 할 일이 없는 것은 실패가 아니다
+            code = 0;
+        }
         if (properties.exitOnFinish()) {
-            int code = summary.consistent() ? 0 : 1;
-            System.exit(SpringApplication.exit(context, () -> code));
+            int exitCode = code;
+            System.exit(SpringApplication.exit(context, () -> exitCode));
         }
     }
 }

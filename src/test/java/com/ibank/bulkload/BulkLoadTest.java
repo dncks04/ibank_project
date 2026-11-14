@@ -245,6 +245,55 @@ class BulkLoadTest {
         assertThat(second.consistent()).isTrue();
     }
 
+    @Test
+    @DisplayName("중간에 실패한 적재를 같은 디렉터리로 다시 실행하면, 끝난 스텝은 건너뛰고 실패한 스텝부터 이어 간다")
+    void failedLoad_restartsFromFailedStep() throws Exception {
+        // 계좌·거래 파일이 없는 디렉터리: 고객 스텝은 성공하고 계좌 스텝에서 실패한다
+        Path dir = Files.createDirectory(tempDir.resolve("restart"));
+        Files.write(dir.resolve("customers.jsonl"), validCustomers(), StandardCharsets.UTF_8);
+
+        BulkLoadService.Summary first = bulkLoadService.load(dir);
+
+        assertThat(first.loadStatus()).isEqualTo(BatchStatus.FAILED);
+        assertThat(first.consistent()).isFalse();
+        assertThat(first.steps().get("customers")).isEqualTo(new BulkLoadStats.StepCounts(2, 0, 0));
+        assertThat(userRepository.count()).as("실패 전에 커밋된 고객은 남아 있다").isEqualTo(2);
+        assertThat(accountRepository.count()).isZero();
+
+        // 빠진 파일을 채우고 같은 디렉터리로 다시 실행한다
+        Files.write(dir.resolve("accounts.jsonl"), validAccounts(), StandardCharsets.UTF_8);
+        Files.write(dir.resolve("transactions.jsonl"), validTransactions(), StandardCharsets.UTF_8);
+        BulkLoadService.Summary second = bulkLoadService.load(dir);
+
+        assertThat(second.loadStatus()).isEqualTo(BatchStatus.COMPLETED);
+        // 같은 잡 인스턴스의 새 실행이다 (메타데이터가 DB에 남아 있어 이어 갈 수 있다)
+        assertThat(second.loadJobExecutionId()).isNotEqualTo(first.loadJobExecutionId());
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(DISTINCT job_instance_id) FROM batch_job_execution WHERE job_execution_id IN (?, ?)
+                """, Long.class, first.loadJobExecutionId(), second.loadJobExecutionId())).isEqualTo(1);
+        // 이미 끝난 고객 스텝은 다시 돌지 않았다: 파일을 다시 읽지조차 않아 "이미 있음"도 0건이다
+        assertThat(second.steps().get("customers")).isEqualTo(new BulkLoadStats.StepCounts(0, 0, 0));
+        assertThat(second.steps().get("accounts")).isEqualTo(new BulkLoadStats.StepCounts(2, 0, 0));
+        assertThat(second.steps().get("transactions")).isEqualTo(new BulkLoadStats.StepCounts(5, 0, 0));
+        assertThat(balanceOf(ACC_ELDER)).isEqualByComparingTo("13300000");
+        assertThat(second.consistent()).isTrue();
+    }
+
+    @Test
+    @DisplayName("끝까지 적재된 디렉터리를 다시 실행하면 아무것도 하지 않고 그 사실을 알린다")
+    void completedDirectory_isNotLoadedAgain() throws Exception {
+        Path dir = writeDataset("done", validCustomers(), validAccounts(), validTransactions());
+        bulkLoadService.load(dir);
+        long transactions = transactionRepository.count();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> bulkLoadService.load(dir))
+                .isInstanceOf(BulkLoadService.AlreadyLoadedException.class)
+                .hasMessageContaining("이미 끝까지 적재된");
+
+        assertThat(transactionRepository.count()).isEqualTo(transactions);
+        assertThat(balanceOf(ACC_ELDER)).isEqualByComparingTo("13300000");
+    }
+
     // ---- 데이터 ----
 
     private List<String> validCustomers() {

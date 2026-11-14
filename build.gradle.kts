@@ -31,6 +31,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-batch")
+    // 배치 메타데이터를 DB(V7의 BATCH_* 테이블)에 저장한다. Spring Boot 4의 기본 배치 스타터는 메타데이터를
+    // 메모리에만 두므로(잡 실행 ID가 항상 1, 재기동하면 사라짐), 이 모듈이 없으면 실행 이력이 남지 않고
+    // 실패한 잡을 마지막 커밋 지점부터 재시작할 수도 없다.
+    implementation("org.springframework.boot:spring-boot-starter-batch-jdbc")
     implementation("org.springframework.boot:spring-boot-starter-cache")
     implementation("com.github.ben-manes.caffeine:caffeine")
     // Redis: 다중 인스턴스 대응 — 분산 rate limit + 인증 캐시 무효화 브로드캐스트 (ibank.redis.enabled로 온오프)

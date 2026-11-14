@@ -7,6 +7,7 @@ import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.JobExecution;
 import org.springframework.batch.core.job.parameters.JobParametersBuilder;
+import org.springframework.batch.core.launch.JobInstanceAlreadyCompleteException;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -70,11 +71,17 @@ public class BulkLoadService {
         }
         stats.reset();
 
-        // inputDir만 식별 파라미터로 둔다. 같은 디렉터리로 다시 실행하면 Spring Batch가 같은 잡 인스턴스로 보고
-        // 실패한 실행을 이어서 재시작한다. (이미 성공한 인스턴스는 다시 돌지 않는다 — 새 데이터는 새 디렉터리에 둔다.)
-        JobExecution load = jobLauncher.run(bulkLoadJob, new JobParametersBuilder()
-                .addString("inputDir", inputDir.toAbsolutePath().normalize().toString())
-                .toJobParameters());
+        // inputDir만 식별 파라미터로 둔다. 같은 디렉터리로 다시 실행하면 Spring Batch가 같은 잡 인스턴스로 보고,
+        // DB에 저장된 메타데이터(BATCH_* 테이블)를 읽어 실패한 스텝의 마지막 커밋 지점부터 재시작한다.
+        // 이미 성공한 인스턴스는 다시 돌지 않는다 — 새 데이터는 새 디렉터리에 둔다.
+        JobExecution load;
+        try {
+            load = jobLauncher.run(bulkLoadJob, new JobParametersBuilder()
+                    .addString("inputDir", inputDir.toAbsolutePath().normalize().toString())
+                    .toJobParameters());
+        } catch (JobInstanceAlreadyCompleteException e) {
+            throw new AlreadyLoadedException(inputDir);
+        }
 
         JobExecution reconciliation = jobLauncher.run(reconciliationJob, new JobParametersBuilder()
                 .addLong("runAt", System.currentTimeMillis())
@@ -94,6 +101,17 @@ public class BulkLoadService {
                 load.getId());
         print(summary);
         return summary;
+    }
+
+    /**
+     * 이 디렉터리는 이미 끝까지 적재됐다. Spring Batch는 같은 식별 파라미터로 성공한 잡을 다시 돌리지 않는다.
+     * 데이터를 고쳤거나 추가했다면 새 디렉터리에 두고 적재한다(이미 적재된 행은 키로 알아보고 건너뛴다).
+     */
+    public static class AlreadyLoadedException extends RuntimeException {
+        public AlreadyLoadedException(Path inputDir) {
+            super("이미 끝까지 적재된 디렉터리입니다: " + inputDir
+                    + " — 고치거나 추가한 데이터는 새 디렉터리에 두고 적재하세요.");
+        }
     }
 
     private void print(Summary summary) {

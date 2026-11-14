@@ -11,6 +11,7 @@ import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.Step;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.infrastructure.repeat.RepeatStatus;
+import org.springframework.batch.infrastructure.support.transaction.ResourcelessTransactionManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -34,8 +35,12 @@ public class InterestPaymentBatchConfig {
     private final InterestPaymentService interestPaymentService;
 
     @Bean
-    public Step interestPaymentStep(JobRepository jobRepository,
-                                    PlatformTransactionManager transactionManager) {
+    public Step interestPaymentStep(JobRepository jobRepository) {
+        // 이 스텝은 DB 트랜잭션으로 감싸지 않는다(ResourcelessTransactionManager). 계좌별 지급이 각자 독립
+        // 트랜잭션(REQUIRES_NEW)으로 커밋되므로 바깥 트랜잭션은 필요가 없고, 감싸 두면 계좌를 도는 내내
+        // 쓰기 트랜잭션 하나가 열려 있게 된다. 그러면 그 시간 동안 Outbox 이벤트 공개가 통째로 멈춘다
+        // (공개 단계는 가장 오래된 쓰기 트랜잭션보다 앞선 이벤트만 내보낸다).
+        PlatformTransactionManager transactionManager = new ResourcelessTransactionManager();
         return new StepBuilder("interestPaymentStep", jobRepository)
                 .tasklet((contribution, chunkContext) -> {
                     List<UnpaidInterest> targets = interestAccrualRepository.findUnpaidGroupedByAccount();

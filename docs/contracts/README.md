@@ -42,7 +42,7 @@ B → ibank     POST /internal/transactions/{id}/cancel    → CANCELLED
 
 ## 협의가 필요한 항목
 
-아래는 ibank 쪽 초안으로 정해 둔 것이다. B 담당자와 확정해야 한다.
+아래는 ibank 쪽에서 초안으로 정해 둔 값이다. B 담당자와 확정해야 한다.
 
 | # | 항목 | 초안 |
 |---|---|---|
